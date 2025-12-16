@@ -1,0 +1,42 @@
+[project]
+name = "PREFACE"
+version = "1.0.0dev"
+description = "PREFACE - PREdict FetAl ComponEnt"
+readme = "README.md"
+authors = [
+  { name = "Matthias De Smet", email = "matthias.desmet@ugent.be" },
+]
+requires-python = ">=3.11,<3.14"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pandas>=2.3.3,<3",
+    "numpy>=2.3.5,<3",
+    "scikit-learn>=1.8.0,<2",
+    "tensorflow>=2.20.0,<3",
+    "matplotlib>=3.10.8,<4",
+    "joblib>=1.5.3,<2",
+    "statsmodels>=0.14.6,<0.15",
+    "typer>=0.20.0,<0.21",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+PREFACE = "preface:app"
+
+[tool.setuptools]
+py-modules = ["preface", "npz_to_parquet"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+PREFACE = { path = ".", editable = true }
+
+[tool.pixi.tasks]

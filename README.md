@@ -30,11 +30,20 @@ For training, PREFACE requires a config file.
     - The possible values for 'gender' are either 'M' (male) or 'F' (female), representing fetal gender. Twins/triplets/... can be included if they are all male or all female.  
     - The 'FF' column contains the response variable (the 'true' fetal fraction). One can use any method he/she believes performs best at quantifying the actual fetal fraction. PREFACE was benchmarked using the number of mapped Y-reads, referred to as FFY. As FFY is not informative for female fetuses, this measure is ignored for cases labeled with 'F', unless the `--femprop` flag is given (see below).  
 
+## Installation & Setup
+
+PREFACE is a Python package that can be installed using `pip`.
+
+```bash
+pip install .
+```
+
+This will install the `PREFACE` command-line tool.
+
 ## Model training
 
 ```bash
-
-RScript PREFACE.R train --config path/to/config.txt --outdir path/to/dir/ [optional arguments]  
+PREFACE train --config path/to/config.txt --outdir path/to/dir/ [optional arguments]
 ```
 
 <br>Optional argument <br><br> | Function  
@@ -49,8 +58,7 @@ RScript PREFACE.R train --config path/to/config.txt --outdir path/to/dir/ [optio
 ## Predicting
 
 ```bash
-
-RScript PREFACE.R predict --infile path/to/infile.bed --model path/to/model.RData [optional arguments]  
+PREFACE predict --infile path/to/infile.bed --model path/to/model_directory [optional arguments]
 ```
 
 <br>Optional argument <br><br> | Function  
@@ -67,19 +75,25 @@ RScript PREFACE.R predict --infile path/to/infile.bed --model path/to/model.RDat
     - If you are not satisfied with the performance of your model or with the position of `--nfeat`, re-run with a different number of features.  
 - Note that the final model will probably be a bit more accurate than what is claimed by the performance statistics. This is because PREFACE uses a cross-validation strategy where 10% of the (male) samples are excluded from training, after which these 10% serve as validation cases. This process is repeated 10 times. Therefore, the final performance measurements are based on models trained with only 90% of the (male) fetuses, yet the resulting model is trained with all provided cases.  
 
-# Required R packages
+# Utilities
 
-- doParallel (v1.0.14)  
-- foreach (v1.4.4)  
-- neuralnet (v1.44.2)  
-- glmnet (v2.0-16)  
-- data.table (v1.11.8)  
-- MASS (v7.3-49)  
-- irlba (v2.3.3)  
+## NPZ to Parquet Converter
 
-Other versions are of course expected to work equally well. To install within R use:  
+This script converts NumPy `.npz` files into one or more Parquet files, facilitating easier exploration and analysis of the stored numerical data using tools like Pandas. Each array within an `.npz` file will be converted to a separate Parquet file.
+
+### Usage
 
 ```bash
+npz-to-parquet <npz_file1> [<npz_file2> ...] [-o <output_directory>]
+```
 
-install.packages(c('data.table', 'glmnet', 'neuralnet', 'foreach', 'doParallel', 'MASS', 'irlba'))
+- `<npz_file1> [<npz_file2> ...]`: One or more paths to the input `.npz` files.
+- `-o, --output-dir`: (Optional) Directory to save the output Parquet files. Defaults to the current directory (`.`).
+
+### Example
+
+To convert `data.npz` and `features.npz` and save the output Parquet files in a directory named `parquet_output`:
+
+```bash
+npz-to-parquet data.npz features.npz -o parquet_output
 ```
