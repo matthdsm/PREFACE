@@ -1,6 +1,6 @@
 [project]
 name = "PREFACE"
-version = "1.0.0dev"
+dynamic = ["version"]
 description = "PREFACE - PREdict FetAl ComponEnt"
 readme = "README.md"
 authors = [
@@ -27,10 +27,13 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-PREFACE = "preface:app"
+PREFACE = "preface.preface:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "preface.__version__"}
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]

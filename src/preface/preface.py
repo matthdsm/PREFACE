@@ -4,9 +4,10 @@ from preface.predict import preface_predict
 from preface.train import preface_train
 from preface.utils.npz_to_parquet import npz_to_parquet
 from preface.utils.ffy import ffy
+from preface import __version__
 
 # Version
-VERSION: str = "1.0.0dev"
+VERSION: str = __version__
 
 # Initialize Typer app
 app = typer.Typer(help="PREFACE - PREdict FetAl ComponEnt")
