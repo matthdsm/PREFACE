@@ -17,7 +17,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.2] - 2021-01-07
 ### Added
-- Previous R based implementation of PREFACE.
+
+- Decreased PCA runtime (irlba is now additional dependency)
+- Made robust vs small training sets for testing purposes (however, models will be inaccurate)
+### Changed
+
+### Removed
+
+## [0.1.1] - 2019-07-15
+
+### Added
+
+### Changed
+- Updated symbols
+- Updated documentation
+
+### Removed
+
+## [0.1.0] - 2019-02-19
+
+### Added
+
+- First release of PREFACE R package.
 
 ### Changed
 
