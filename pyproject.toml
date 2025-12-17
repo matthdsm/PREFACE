@@ -29,12 +29,12 @@ build-backend = "setuptools.build_meta"
 [project.scripts]
 PREFACE = "preface:app"
 
-[tool.setuptools]
-py-modules = ["preface", "npz_to_parquet"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64","linux-64","linux-aarch64"]
 
 [tool.pixi.pypi-dependencies]
 PREFACE = { path = ".", editable = true }
