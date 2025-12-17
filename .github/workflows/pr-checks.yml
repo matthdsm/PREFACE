@@ -1,0 +1,88 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  pre-release-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Version and Changelog
+        shell: python
+        run: |
+          import sys
+          import re
+          import subprocess
+          import os
+
+          def get_version_from_content(content):
+              match = re.search(r'__version__\s*=\s*["\']([^"\\]+)["\\]', content)
+              if match:
+                  return match.group(1)
+              return None
+
+          print("--- Starting Checks ---")
+
+          # 1. Get current version
+          try:
+              with open('src/preface/__init__.py', 'r') as f:
+                  current_content = f.read()
+              current_version = get_version_from_content(current_content)
+              if not current_version:
+                  print("Error: Could not find __version__ in src/preface/__init__.py")
+                  sys.exit(1)
+              print(f"Current version: {current_version}")
+          except FileNotFoundError:
+              print("Error: src/preface/__init__.py not found")
+              sys.exit(1)
+
+          # 2. Check for 'dev' in version
+          if 'dev' in current_version.lower():
+              print("Error: Version contains 'dev'. PRs to master must be release versions.")
+              sys.exit(1)
+          
+          # 3. Get master version
+          try:
+              # Fetch origin/master to ensure we have the reference
+              subprocess.run(['git', 'fetch', 'origin', 'master'], check=True, capture_output=True)
+              master_content = subprocess.check_output(['git', 'show', 'origin/master:src/preface/__init__.py']).decode('utf-8')
+              master_version = get_version_from_content(master_content)
+              print(f"Master version: {master_version}")
+          except subprocess.CalledProcessError:
+              print("Warning: Could not fetch version from origin/master (maybe it's the first commit?). Skipping bump check.")
+              master_version = None
+
+          # 4. Check if version bumped
+          if master_version and current_version == master_version:
+              print(f"Error: Version {current_version} has not been bumped compared to master ({master_version}).")
+              sys.exit(1)
+
+          # 5. Check Changelog
+          # Using git diff to check for modified files between origin/master and HEAD
+          try:
+              changed_files_output = subprocess.check_output(['git', 'diff', '--name-only', 'origin/master']).decode('utf-8')
+              changed_files = changed_files_output.splitlines()
+              
+              if 'CHANGELOG.md' not in changed_files:
+                  print("Error: CHANGELOG.md has not been modified.")
+                  print("Changed files found:", changed_files)
+                  sys.exit(1)
+              print("CHANGELOG.md modification found.")
+
+          except subprocess.CalledProcessError as e:
+              print(f"Error checking git diff: {e}")
+              sys.exit(1)
+
+          print("--- All checks passed successfully ---")
