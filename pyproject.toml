@@ -43,3 +43,6 @@ platforms = ["osx-arm64","linux-64","linux-aarch64"]
 PREFACE = { path = ".", editable = true }
 
 [tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+pylint = ">=4.0.4,<5"

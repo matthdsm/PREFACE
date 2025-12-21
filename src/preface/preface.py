@@ -1,3 +1,7 @@
+"""
+PREFACE CLI entry point.
+"""
+
 import typer
 
 from preface.predict import preface_predict

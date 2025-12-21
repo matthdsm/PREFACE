@@ -1,5 +1,10 @@
+"""
+Convert NPZ to Parquet utility.
+"""
+
+# pylint: disable=broad-exception-caught
+
 import os
-import sys
 from typing import List
 
 import numpy as np
@@ -29,7 +34,8 @@ def _convert_single_npz(npz_path: str, output_dir: str) -> None:
         output_filepath = os.path.join(output_dir, output_filename)
 
         typer.echo(
-            f"  Converting array '{key}' (shape: {array.shape}, dtype: {array.dtype}) to {output_filepath}"
+            f"  Converting array '{key}' (shape: {array.shape}, "
+            f"dtype: {array.dtype}) to {output_filepath}"
         )
 
         # Handle different array dimensions
@@ -48,7 +54,8 @@ def _convert_single_npz(npz_path: str, output_dir: str) -> None:
                 )
         elif array.ndim > 2:
             typer.echo(
-                f"  Warning: Array '{key}' has {array.ndim} dimensions. Flattening for Parquet storage.",
+                f"  Warning: Array '{key}' has {array.ndim} dimensions. "
+                "Flattening for Parquet storage.",
                 err=True,
             )
             # Flatten to 1D and then treat as a single-column DataFrame

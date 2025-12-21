@@ -1,12 +1,18 @@
+"""
+Predict module for PREFACE.
+"""
 
+# pylint: disable=too-many-locals,too-many-branches,too-many-statements
 
-import typer
-import joblib
 import os
 import json
 from typing import Optional, Union
+import numpy as np
 import pandas as pd
+import joblib
+import typer
 from sklearn.linear_model import LinearRegression
+from tensorflow import keras  # pylint: disable=no-name-in-module,import-error
 
 
 def preface_predict(
@@ -45,8 +51,9 @@ def preface_predict(
     is_olm = model_data["is_olm"]
     the_intercept = model_data["the_intercept"]
     the_slope = model_data["the_slope"]
-    the_intercept_X = model_data["the_intercept_X"]
-    the_slope_X = model_data["the_slope_X"]
+    # Variable names in the pickle are fixed, but we map them to snake_case locals
+    intercept_x = model_data["the_intercept_X"]
+    slope_x = model_data["the_slope_X"]
 
     dir_path = os.path.dirname(meta_path)
     model: Union[LinearRegression, keras.Model]
@@ -64,7 +71,7 @@ def preface_predict(
     else:
         x_ratio = float(np.nan)
 
-    FFX: float = (x_ratio - the_intercept_X) / the_slope_X
+    ffx: float = (x_ratio - intercept_x) / slope_x
 
     bin_table["feat_id"] = (
         bin_table["chr"].astype(str)
@@ -90,14 +97,14 @@ def preface_predict(
 
     prediction = the_intercept + the_slope * prediction
 
-    json_dict = {"FFX": FFX / 100, "PREFACE": prediction / 100}
+    json_dict = {"FFX": ffx / 100, "PREFACE": prediction / 100}
 
     if json_output:
-        if json_output != "stdout" and json_output != "":
-            with open(json_output, "w") as f:
+        if json_output not in ("stdout", ""):
+            with open(json_output, "w", encoding="utf-8") as f:
                 json.dump(json_dict, f)
         else:
             typer.echo(json.dumps(json_dict))
     else:
-        typer.echo(f"FFX = {FFX:.4g}%")
+        typer.echo(f"FFX = {ffx:.4g}%")
         typer.echo(f"PREFACE = {prediction:.4g}%")

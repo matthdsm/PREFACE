@@ -8,18 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-01-06
 
 ### Added
+
 - Initial Python based implementation of PREFACE.
 
 ### Changed
 
 ### Removed
+
 - Dropped R based implementation of PREFACE.
 
 ## [0.1.2] - 2021-01-07
+
 ### Added
 
 - Decreased PCA runtime (irlba is now additional dependency)
 - Made robust vs small training sets for testing purposes (however, models will be inaccurate)
+
 ### Changed
 
 ### Removed
@@ -29,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 ### Changed
+
 - Updated symbols
 - Updated documentation
 
