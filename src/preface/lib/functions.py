@@ -3,11 +3,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.decomposition import PCA
 import statsmodels.api as sm
+import tensorflow as tf
+from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error
-import tensorflow as tf
 from tensorflow.keras import (  # pylint: disable=no-name-in-module,import-error # type: ignore
     Model,
     layers,
@@ -92,7 +92,7 @@ def build_ensemble(n_feat: int, pca: PCA, models: list[Model]) -> Model:
     class_outputs = []
 
     for i, fold_model in enumerate(models):
-        fold_model._name = f"fold_model_{i}"  # Ensure unique names
+        fold_model.name = f"fold_model_{i}"  # Ensure unique names
 
         # Pass the PCA features through the fold model
         reg_out, class_out = fold_model(pca_feat)
