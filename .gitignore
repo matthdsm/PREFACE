@@ -3,6 +3,7 @@
 data/
 *.egg-info
 __pycache__/
+.gemini/
 # pixi environments
 .pixi/*
 !.pixi/config.toml

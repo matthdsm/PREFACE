@@ -4,515 +4,274 @@ Training module for PREFACE.
 
 import os
 import time
-from typing import List, Optional, Any, Dict, Union
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-import joblib
-import matplotlib.pyplot as plt
-import statsmodels.api as sm
-from sklearn.decomposition import PCA
-from sklearn.linear_model import LinearRegression
-from joblib import Parallel, delayed
-from tensorflow import keras
-from tensorflow.keras import layers
 import typer
+from pandera.errors import SchemaError
+import sklearn
+from sklearn.experimental import enable_iterative_imputer  # pylint: disable=unused-import # noqa: F401  # type: ignore
+from sklearn.impute import IterativeImputer
+from sklearn.decomposition import PCA
+from sklearn.metrics import f1_score, mean_absolute_error, r2_score, roc_auc_score
+from sklearn.model_selection import KFold
+from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
 
+from preface.lib.functions import (
+    build_ensemble,
+    build_multi_output_nn,
+    plot_regression_performance,
+    preprocess_ratios,
+)
+from preface.lib.schemas import SampleDataSchema, SampleSchema
 
 # Constants
-EXCLUDE_CHRS: List[str] = ['13', '18', '21', 'X', 'Y']
-COLOR_A: str = '#8DD1C6'
-COLOR_B: str = '#E3C88A'
-COLOR_C: str = '#C87878'
-
-
-def get_mean_diff(v1: np.ndarray, v2: np.ndarray, abs_val: bool = True) -> float:
-    """Calculate mean difference."""
-    if not abs_val:
-        return float(np.mean(v1 - v2))
-    return float(np.mean(np.abs(v1 - v2)))
-
-
-def get_std_diff(v1: np.ndarray, v2: np.ndarray) -> float:
-    """Calculate standard deviation of difference."""
-    return float(np.std(np.abs(v1 - v2), ddof=1))  # ddof=1 for sample sd
-
-
-def plot_performance(
-    v1: np.ndarray,
-    v2: np.ndarray,
-    pca_explained_variance_ratio: np.ndarray,
-    n_feat: int,
-    xlab: str,
-    ylab: str,
-    path: str
-) -> List[float]:
-    """Plot performance metrics."""
-
-    # R plot layout: 1 row, 3 columns.
-    _, axes = plt.subplots(1, 3, figsize=(15, 5))
-
-    # Plot 1: PCA Importance
-    ax = axes[0]
-    y_vals = pca_explained_variance_ratio
-    x_vals = np.arange(1, len(y_vals) + 1)
-
-    # Filtering zeros for log
-    mask = y_vals > 0
-    x_vals = x_vals[mask]
-    y_vals = y_vals[mask]
-
-    ax.plot(np.log(x_vals), np.log(y_vals), color=COLOR_A, linewidth=2)
-    ax.set_xlabel('Principal components (log scale)')
-    ax.set_ylabel('Proportion of variance (log scale)')
-    ax.set_title('PCA')
-
-    # Vertical line at n_feat
-    log_n_feat = np.log(n_feat)
-    ylim = ax.get_ylim()
-    ax.vlines(
-        log_n_feat,
-        ylim[0],
-        ylim[1] * 0.99,
-        colors=COLOR_C,
-        linestyles='dotted',
-        linewidth=3
-    )
-    ax.text(
-        log_n_feat,
-        ylim[1],
-        'Number of features',
-        color=COLOR_C,
-        ha='center',
-        va='bottom',
-        fontsize=8
-    )
-
-    # Plot 2: Scatter Plot
-    ax = axes[1]
-    mx = max(float(np.max(v1)), float(np.max(v2)))
-    ax.scatter(v1, v2, s=10, c='black', alpha=0.6)
-    ax.set_xlabel(xlab)
-    ax.set_ylabel(ylab)
-    ax.set_xlim(0, mx)
-    ax.set_ylim(0, mx)
-    ax.set_title('Scatter plot')
-
-    # OLS fit
-    intercept: float = 0.0
-    slope: float = 0.0
-    correlation: float = 0.0
-
-    if len(np.unique(v1)) > 1:
-        reg = LinearRegression().fit(v1.reshape(-1, 1), v2)
-        fit_line = reg.predict(np.array([[0], [mx]]))
-        ax.plot([0, mx], fit_line, color=COLOR_A, linestyle='--', linewidth=2, label='OLS fit')
-        intercept = float(reg.intercept_)
-        slope = float(reg.coef_[0])
-        correlation = float(np.corrcoef(v1, v2)[0, 1])
-    else:
-        # Fallback if v1 is constant
-        mean_v2 = float(np.mean(v2))
-        ax.plot(
-            [0, mx],
-            [mean_v2, mean_v2],
-            color=COLOR_A,
-            linestyle='--',
-            linewidth=2,
-            label='Mean fit'
-        )
-        intercept = mean_v2
-        slope = 0.0
-        correlation = 0.0
-
-    # Identity line
-    ax.plot([0, mx], [0, mx], color=COLOR_B, linestyle=':', linewidth=3, label='f(x)=x')
-
-    ax.legend()
-    ax.text(0, mx * 1.03, f'(r = {correlation:.3g})', fontsize=9, ha='left')
-
-    # Plot 3: Histogram of errors
-    ax = axes[2]
-    errors = v1 - v2
-    n_bins = max(20, len(v1)//10)
-    counts, bins, _ = ax.hist(errors, bins=n_bins, density=True, color='black', alpha=0.5)
-    ax.set_xlabel(f'{xlab} - {ylab}')
-    ax.set_ylabel('Density')
-    ax.set_title('Histogram')
-
-    mx_hist = float(np.max(counts)) if len(counts) > 0 else 0.1
-    # Mean error line
-    mean_err = get_mean_diff(v1, v2, abs_val=False)
-    ax.vlines(
-        mean_err, 0, mx_hist, colors=COLOR_A, linestyles='--', linewidth=3, label='mean error'
-    )
-    ax.vlines(0, 0, mx_hist, colors=COLOR_B, linestyles=':', linewidth=3, label='x=0')
-    ax.legend()
-
-    mae = get_mean_diff(v1, v2)
-    sd_diff = get_std_diff(v1, v2)
-    min_bin = float(min(bins)) if len(bins) > 0 else 0.0
-    ax.text(
-        min_bin,
-        mx_hist * 1.03,
-        f'(MAE = {mae:.3g} ± {sd_diff:.3g})',
-        fontsize=9,
-        ha='left'
-    )
-
-    plt.tight_layout()
-    plt.savefig(path, dpi=300)
-    plt.close()
-
-    return [intercept, slope, mae, sd_diff, correlation]
-
-
-def train_neural_network(
-    x_train: np.ndarray, y_train: np.ndarray, hidden_units: int
-) -> keras.Model:
-    """Train a simple neural network."""
-    model = keras.Sequential([
-        layers.Input(shape=(x_train.shape[1],)),
-        layers.Dense(hidden_units, activation='sigmoid'),
-        layers.Dense(1, activation='linear')
-    ])
-
-    model.compile(optimizer='adam', loss='mse')
-
-    early_stop = keras.callbacks.EarlyStopping(
-        monitor='loss', patience=10, restore_best_weights=True
-    )
-
-    model.fit(
-        x_train, y_train, epochs=200, batch_size=32, verbose=0, callbacks=[early_stop]
-    )
-    return model
+EXCLUDE_CHRS: list[str] = ['13', '18', '21', 'X', 'Y']
 
 
 def preface_train(
-    config_file: Path = typer.Option(..., "--config", help="Path to config file"),
+    samplesheet: Path = typer.Option(..., "--samplesheet", help="Path to samplesheet file"),
     out_dir: Path = typer.Option(..., "--outdir", help="Output directory"),
     n_feat: int = typer.Option(50, "--nfeat", help="Number of features (PCA components)"),
-    hidden: int = typer.Option(2, "--hidden", help="Hidden units in NN"),
-    cpus: int = typer.Option(1, "--cpus", help="Number of CPUs"),
-    femprop: bool = typer.Option(False, "--femprop", help="Include females in training"),
-    olm: bool = typer.Option(False, "--olm", help="Use Ordinary Linear Model instead of NN"),
-    noskewcorrect: bool = typer.Option(False, "--noskewcorrect", help="Disable skew correction")
+    n_folds: int = typer.Option(5, "--nfolds", help="Number of folds for cross-validation"),
+    n_neurons: int = typer.Option(2, "--neurons", help="Number of initial neurons in neural network"),
+    exclude_chrs: list[str] = typer.Option(EXCLUDE_CHRS, "--exclude-chrs", help="Chromosomes to exclude from training"),
+    impute: bool = typer.Option(False, "--impute", help="Impute missing values instead of assuming zero")
 ) -> None:
     """
     Train the PREFACE model.
     """
-    start_time = time.time()
-    train_sex: List[str] = ['M', 'F'] if femprop else ['M']
+    start_time: float = time.time()
 
-    out_dir_path: str = os.path.join(out_dir, '')
-
-    # Load config
-    config = pd.read_csv(
-        config_file, sep='\t', comment='#', dtype={'sex': str, 'ID': str}
+    # Load samplesheet
+    samplesheet_data: pd.DataFrame = pd.read_csv(
+        samplesheet, comment='#', dtype={'sex': str, 'ID': str}, index_col='ID'
     )
 
+    # Validate samplesheet
+    samplesheet_schema = SampleSchema()
+    try:
+        samplesheet_schema.validate(samplesheet_data)
+    except SchemaError as e:
+        typer.echo(f"Error validating samplesheet: {e}")
+        raise typer.Exit(code=1)
+
     # Check samples
-    labeled_samples = config[config['sex'].isin(train_sex)]
-    if len(labeled_samples) < n_feat:
+    if len(samplesheet_data) < n_feat:
         typer.echo(f"Please provide at least {n_feat} labeled samples.")
         raise typer.Exit(code=1)
 
-    # Load first file for structure
-    first_path: str = str(config['filepath'].iloc[0])
-    training_frame_meta = load_bed_full(first_path)
-    training_frame_meta = training_frame_meta[['chr', 'start', 'end']]
-
-    # Load all ratios in parallel
+    # Load all sample data
     typer.echo("Loading samples...")
-    results: List[pd.DataFrame] = Parallel(n_jobs=cpus)(
-        delayed(pd.read_csv)(str(f), sep='\t') for f in config['filepath']
-    )
 
-    lengths: List[int] = [len(x) for x in results if x is not None]
-    if len(set(lengths)) > 1:
-        typer.echo("Error: Input BED files have different numbers of bins (excluding Y).")
-        raise typer.Exit(code=1)
+    # instantiate lists for ratios
+    ratios_list: list[pd.DataFrame] = []
 
-    # Filter out Nones and stack
-    valid_results: List[np.ndarray] = [res for res in results if res is not None]
-    training_frame_sub = np.column_stack(valid_results)
+    # instantiate schema
+    sample_data_schema = SampleDataSchema()
 
-    # Ensure meta alignment
-    training_frame_meta = training_frame_meta[training_frame_meta['chr'] != 'Y']
-    if len(training_frame_meta) != training_frame_sub.shape[0]:
-        typer.echo("Mismatch in row counts between metadata and loaded data.")
-        raise typer.Exit(code=1)
+    # instantiate number of bins checker
+    number_of_bins: int = -1
 
-    is_x = training_frame_meta['chr'] == 'X'
-    x_ratios_raw = training_frame_sub[is_x, :]
-    x_ratios = 2 ** np.nanmean(x_ratios_raw, axis=0)
+    # parse data
+    for _, sample in samplesheet_data.iterrows():
+        if not Path(sample['filepath']).exists() or not Path(sample['filepath']).is_file():
+            typer.echo(f"Error: File '{sample['filepath']}' does not exist.")
+            raise typer.Exit(code=1)
+        # load ratios (bed format)
+        ratios = pd.read_csv(sample['filepath'], dtype={'chr': str, 'start': int, 'end': int, 'ratio': float}, sep='\t', header=0)
+        # validate ratios
+        try:
+            sample_data_schema.validate(ratios)
+        except SchemaError as e:
+            typer.echo(f"Error validating sample data for file {sample['filepath']}: {e}")
+            raise typer.Exit(code=1)
+
+        # check number of bins consistency
+        number_of_bins_current = len(ratios)
+        if number_of_bins == -1:
+            number_of_bins = number_of_bins_current
+        elif number_of_bins != number_of_bins_current:
+            typer.echo("Error: Input BED files have different numbers of bins.")
+            raise typer.Exit(code=1)
+
+        # preprocess ratios
+        masked_ratios = preprocess_ratios(ratios, exclude_chrs)
+
+        # add sample metadata columns to transposed ratios
+        masked_ratios['id'] = sample['ID']
+        masked_ratios['sex'] = sample['sex']
+        masked_ratios['ff'] = sample['FF']
+
+        # add to list
+        ratios_list.append(masked_ratios)
+
+    # Stack dataframes horizontally
+    typer.echo("Merging sample data...")
+    ratios_per_sample: pd.DataFrame = pd.concat(ratios_list, axis=0)
+
+    # set index to ID column
+    ratios_per_sample = ratios_per_sample.set_index('id')
 
     typer.echo("Creating training frame...")
 
-    mask_keep = ~training_frame_meta['chr'].isin(EXCLUDE_CHRS)
+    # Handle NaN values
+    # Identify the type of missingness (MCAR, MAR, MNAR). Here we assume MAR.
+    # Since the input log2 ratios indicate relative coverage to a reference,
+    # we can either impute missing values with the mean ratio of that feature
+    # or assume zero (no change).
+    # Option 1: Impute NaN through MICE (Multiple Imputation by Chained Equations)
+    if impute:
+        # Check sklearn version for compatibility
+        sk_version = sklearn.__version__
+        if sk_version != "1.8.0":
+            typer.echo(f"""Warning: PREFACE uses imputation and was developed using scikit-learn version 1.8.0.
+                        Since imputation is still experimental, it may be subject to change in other versions.
+                        You are using version {sk_version}. Proceed with caution.""")
 
-    training_frame_filtered = training_frame_sub[mask_keep, :]
-    training_frame_meta_filtered = training_frame_meta[mask_keep]
+        typer.echo("Imputing missing values using MICE...")
 
-    # Transpose: Samples as rows, Features as columns
-    training_frame = training_frame_filtered.T
+        imputer = IterativeImputer(random_state=42, max_iter=10, initial_strategy='mean')
+        training_df_array = imputer.fit_transform(ratios_per_sample)
+        ratios_per_sample = pd.DataFrame(
+            training_df_array,
+            index=ratios_per_sample.index,
+            columns=ratios_per_sample.columns
+        )
+    # Option 2: Assume missing values are zero (no change)
+    else:
+        typer.echo("Assuming missing values are zero...")
+        ratios_per_sample = ratios_per_sample.fillna(0.0)
 
-    feature_names = (
-        training_frame_meta_filtered['chr'].astype(str) + ':' +
-        training_frame_meta_filtered['start'].astype(str) + '-' +
-        training_frame_meta_filtered['end'].astype(str)
-    ).values
+    # Split into features and labels
+    x_all: pd.DataFrame = ratios_per_sample.drop(columns=['sex', 'ff'])
+    # labels for regression (fetal fraction)
+    y_ff_all = ratios_per_sample['ff']
+    # labels for classification (sex)
+    y_sex_all = (
+        ratios_per_sample['sex']
+        .map({"M": 1, "F": 0})
+        .astype(float)
+        .values
+    )
 
-    training_df = pd.DataFrame(training_frame, columns=feature_names)
+    # Reduce dimensionality with PCA
+    global_pca = PCA(n_components=n_feat)
+    x_all_pca = global_pca.fit_transform(x_all)
 
-    # Filter NAs
-    na_threshold = len(config) * 0.01
-    cols_to_keep = training_df.isna().sum() < na_threshold
-    training_df = training_df.loc[:, cols_to_keep]
+    # Set up training
+    # Create directory to store fold metrics
+    os.makedirs(out_dir / 'training_folds', exist_ok=True)
+    fold_metrics = []
+    fold_models: list[keras.Model] = []
 
-    possible_features = training_df.columns.values
-    mean_features = training_df.mean()
+    # Set up k-fold cross-validation
+    kf: KFold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+    for fold, (train_idx, test_idx) in enumerate(kf.split(x_all_pca), 1):
+        typer.echo(f"Processing Fold {fold}/{n_folds}...")
 
-    training_df = training_df.fillna(mean_features)
+        # split into train and test sets
+        x_train, x_test = x_all_pca[train_idx], x_all_pca[test_idx]
+        y_ff_train, y_ff_test = y_ff_all[train_idx], y_ff_all[test_idx]
+        y_sex_train, y_sex_test = y_sex_all[train_idx], y_sex_all[test_idx]
 
-    typer.echo(f"Remaining training features after 'NA' filtering: {len(possible_features)}")
+        # Create new model instance
+        model = build_multi_output_nn(input_dim=n_feat, n_neurons=n_neurons)
 
-    os.makedirs(os.path.join(out_dir_path, 'training_repeats'), exist_ok=True)
-
-    repeats: int = 10
-    test_percentage: float = 1.0 / repeats
-
-    train_mask = config['sex'].isin(train_sex)
-    train_indices_all: List[int] = config.index[train_mask].tolist()
-
-    n_train_samples: int = len(train_indices_all)
-    test_number: int = int(n_train_samples * test_percentage)
-
-    max_feat: int = n_train_samples - test_number - 1
-    if n_feat > max_feat:
-        typer.echo(f"Too few samples were provided for --nfeat {n_feat}, using --nfeat {max_feat}")
-        n_feat = max_feat
-
-    train_subset_df = training_df.iloc[train_indices_all].reset_index(drop=True)
-    y_all: np.ndarray = config.loc[train_indices_all, 'FF'].astype(float).values
-
-    results_repeats: List[Dict[str, Any]] = []
-
-    for i in range(1, repeats + 1):
-        typer.echo(f"Model training | Repeat {i}/{repeats} ...")
-
-        start_idx: int = int((i - 1) * test_number)
-        end_idx: int = int(i * test_number)
-
-        test_idxs_local: List[int] = list(range(start_idx, end_idx))
-        train_idxs_local: List[int] = list(set(range(len(train_subset_df))) - set(test_idxs_local))
-
-        x_tr_local = train_subset_df.iloc[train_idxs_local]
-        x_te_local = train_subset_df.iloc[test_idxs_local]
-        y_tr_local = y_all[train_idxs_local]
-        y_te_local = y_all[test_idxs_local]
-
-        typer.echo("\tExecuting principal component analysis ...")
-        n_components_pca: int = min(n_feat * 10, len(x_tr_local) - 1)
-        pca = PCA(n_components=n_components_pca)
-        pca.fit(x_tr_local)
-
-        x_train_pca = pca.transform(x_tr_local)
-        x_test_pca = pca.transform(x_te_local)
-
-        x_train_model = x_train_pca[:, :n_feat]
-        x_test_model = x_test_pca[:, :n_feat]
-
-        prediction: Optional[np.ndarray] = None
-        if olm:
-            typer.echo("\tTraining ordinary linear model ...")
-            model = LinearRegression()
-            model.fit(x_train_model, y_tr_local)
-            prediction = model.predict(x_test_model)
-        else:
-            typer.echo("\tTraining neural network ...")
-            model = train_neural_network(x_train_model, y_tr_local, hidden)
-            prediction = model.predict(x_test_model).flatten()
-
-        info = plot_performance(
-            prediction,
-            y_te_local,
-            pca.explained_variance_ratio_,
-            n_feat,
-            'PREFACE (%)',
-            'FF (%)',
-            os.path.join(out_dir_path, 'training_repeats', f'repeat_{i}.png')
+        # Train
+        typer.echo(f"Training fold {fold}...")
+        # Early stopping callback
+        early_stop = keras.callbacks.EarlyStopping(
+            monitor='val_loss',
+            patience=5,
+            restore_best_weights=True
+        )
+        # Fit model
+        model.fit(
+            x_train,
+            {"reg_output": y_ff_train, "class_output": y_sex_train},
+            validation_data=(
+                x_test,
+                {"reg_output": y_ff_test, "class_output": y_sex_test},
+            ),
+            epochs=100,
+            batch_size=32,
+            verbose=1,
+            callbacks=[early_stop],
         )
 
-        results_repeats.append({
-            'intercept': info[0],
-            'slope': info[1],
-            'prediction': prediction
-        })
+        # Save fold model
+        model.save(out_dir / 'training_folds' / f'fold_{fold}.keras')
+        fold_models.append(model)
 
-    predictions: np.ndarray = np.concatenate([r['prediction'] for r in results_repeats])
+        # Evaluate
+        predictions = model.predict(x_test)
+        y_ff_pred = predictions[0].flatten()
+        class_pred_probs = predictions[1].flatten()
+        class_pred = (class_pred_probs >= 0.5).astype(int)
 
-    the_intercept: float = 0.0
-    the_slope: float = 1.0
+        # Plot regression performance
+        reg_perf = plot_regression_performance(
+            y_ff_pred,
+            y_ff_test.to_numpy(),
+            global_pca.explained_variance_ratio_,
+            n_feat,
+            "PREFACE (%)",
+            "FF (%)",
+            out_dir / "training_folds" / f"fold_{fold}_regression.png",
+        )
 
-    n_used: int = int(test_number * repeats)
-    y_used: np.ndarray = y_all[:n_used]
+        # Calculate metrics
+        metrics: dict = {
+            # fold number
+            'fold': fold,
+            # regression metrics
+            'ff_mae': mean_absolute_error(y_ff_test, y_ff_pred),
+            'ff_r2': r2_score(y_ff_test, y_ff_pred),
+            'ff_intercept': reg_perf['intercept'],
+            'ff_slope': reg_perf['slope'],
+            # classification metrics
+            'sex_f1': f1_score(y_sex_test, class_pred), # type: ignore
+            'sex_auc': roc_auc_score(y_sex_test, class_pred_probs) # type: ignore
+        }
+        fold_metrics.append(metrics)
 
-    if not noskewcorrect:
-        np.random.seed(1)
-        n_pred: int = len(predictions)
-        p: np.ndarray = np.random.choice(n_pred, max(1, n_pred // 4), replace=False)
-
-        pred_p = predictions[p]
-        y_p = y_used[p]
-
-        reg_skew = LinearRegression().fit(pred_p.reshape(-1, 1), y_p)
-        the_intercept = float(reg_skew.intercept_)
-        the_slope = float(reg_skew.coef_[0])
-
-        typer.echo("Correction for skew:")
-        typer.echo(f"\tIntercept: {the_intercept}")
-        typer.echo(f"\tSlope: {the_slope}")
-
-    typer.echo("Training FFX Model...")
-
-    mask_m = config['sex'] == 'M'
-    v1_m: np.ndarray = config.loc[mask_m, 'FF'].astype(float).values
-    v2_m: np.ndarray = x_ratios[mask_m]
-
-    x_rlm = sm.add_constant(v1_m)
-    rlm_model = sm.RLM(v2_m, x_rlm, M=sm.robust.norms.HuberT())
-    rlm_results = rlm_model.fit()
-
-    fit_params = rlm_results.params
-    intercept_x: float = fit_params[0]
-    slope_x: float = fit_params[1]
-
-    _, axes = plt.subplots(1, 2, figsize=(10, 5))
-    ax = axes[0]
-    ax.scatter(v1_m, v2_m, s=10, c='black', alpha=0.6)
-    ax.set_xlabel('FF (%)')
-    ax.set_ylabel('μ(ratio X)')
-    mx = max(v1_m) if len(v1_m) > 0 else 1
-    ax.set_xlim(0, mx)
-
-    x_range = np.array(
-        [min(v1_m) if len(v1_m) > 0 else 0, max(v1_m) if len(v1_m) > 0 else 1]
-    )
-    y_range = intercept_x + slope_x * x_range
-    ax.plot(x_range, y_range, color=COLOR_A, linestyle='--', linewidth=2, label='RLS fit')
-    ax.legend()
-
-    ax = axes[1]
-    v2_corrected = (v2_m - intercept_x) / slope_x if slope_x != 0 else v2_m
-    ax.scatter(v1_m, v2_corrected, s=10, c='black', alpha=0.6)
-    ax.set_xlabel('FF (%)')
-    ax.set_ylabel('FFX (%)')
-    ax.set_xlim(0, mx)
-    ax.plot(
-        [x_range[0], x_range[1]], [x_range[0], x_range[1]],
-        color=COLOR_B, linestyle=':', linewidth=3
+    # Save fold metrics to a DataFrame
+    fold_metrics_df = pd.DataFrame(fold_metrics)
+    fold_metrics_df.to_csv(
+        out_dir / 'training_fold_metrics.csv', index=False
     )
 
-    plt.tight_layout()
-    plt.savefig(os.path.join(out_dir_path, 'FFX.png'), dpi=300)
-    plt.close()
+    # Build ensemble model from fold models
+    typer.echo("Building ensemble model from fold models...")
+    ensemble_model = build_ensemble(len(x_all.columns), global_pca, fold_models)
+    ensemble_model.save(out_dir / 'PREFACE')
 
-    predictions_corrected = the_intercept + the_slope * predictions
-
-    typer.echo("Executing final principal component analysis ...")
-
-    pca_final = PCA(n_components=min(n_feat * 10, len(train_subset_df) - 1))
-    pca_final.fit(train_subset_df)
-
-    x_train_final = pca_final.transform(train_subset_df)[:, :n_feat]
-    y_train_final = y_all
-
-    model_final: Union[LinearRegression, keras.Model]
-    if olm:
-        typer.echo("Training final ordinary linear model ...")
-        model_final = LinearRegression()
-        model_final.fit(x_train_final, y_train_final)
-    else:
-        typer.echo("Training final neural network ...")
-        model_final = train_neural_network(x_train_final, y_train_final, hidden)
-
-    info_overall = plot_performance(
-        predictions_corrected,
-        y_used,
-        pca_final.explained_variance_ratio_,
+    # Final evaluation on all training data
+    typer.echo("Evaluating final model on all training data...")
+    predictions = ensemble_model.predict(x_all)
+    info_overall = plot_regression_performance(
+        predictions[0].flatten(),
+        y_ff_all.to_numpy(),
+        global_pca.explained_variance_ratio_,
         n_feat,
         'PREFACE (%)',
         'FF (%)',
-        os.path.join(out_dir_path, 'overall_performance.png')
+        out_dir / 'overall_performance.png'
     )
 
-    deviations = np.abs(predictions_corrected - y_used)
-    mae = info_overall[2]
-    sd = info_overall[3]
-    outlier_threshold = mae + 3 * sd
-    outlier_indices = np.where(deviations > outlier_threshold)[0]
-
     with open(
-        os.path.join(out_dir_path, 'training_statistics.txt'), 'w', encoding='utf-8'
+        out_dir / 'training_statistics.txt', 'w', encoding='utf-8'
     ) as f:
-        f.write('PREFACE - PREdict FetAl ComponEnt\n\n')
-
-        if len(outlier_indices) > 0:
-            f.write('Below, some of the top candidates for outlier removal are listed.\n')
-            f.write('_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_- _\n')
-            f.write('ID\tFF (%) - PREFACE (%)\n')
-
-            sorted_outlier_idxs = outlier_indices[np.argsort(-deviations[outlier_indices])]
-            subset_ids = config.loc[train_indices_all, 'ID'].values[:n_used]
-            subset_diffs = predictions_corrected - y_used
-
-            for idx in sorted_outlier_idxs:
-                f.write(f"{subset_ids[idx]}\t{subset_diffs[idx]:.4f}\n")
-            f.write('_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_- _\n\n')
-
-        elapsed_time = time.time() - start_time
-        f.write(f"Training time: {elapsed_time:.0f} seconds\n")
-        f.write(f"Overall correlation (r): {info_overall[4]:.4f}\n")
         f.write(
-            f"Overall mean absolute error (MAE): "
-            f"{info_overall[2]:.4f} ± {info_overall[3]:.4f}\n"
+            f"""PREFACE - PREdict FetAl ComponEnt
+            Training time: {time.time() - start_time:.0f} seconds
+            Overall correlation (r): {info_overall["correlation"]:.4f}
+            Overall mean absolute error (MAE): {info_overall["mae"]:.4f} ± {info_overall["sd_diff"]:.4f}
+            """
         )
 
-        mask_10 = y_used < 10.0
-        if np.any(mask_10):
-            devs_10 = deviations[mask_10]
-            f.write(
-                f"FF < 10% mean absolute error (MAE): "
-                f"{np.mean(devs_10):.4f} ± {np.std(devs_10, ddof=1):.4f}\n"
-            )
-
-        f.write("Correction for skew: \n")
-        f.write(f"\tIntercept: {the_intercept}\n")
-        f.write(f"\tSlope: {the_slope}\n\n")
-
-    model_data = {
-        'n_feat': n_feat,
-        'mean_features': mean_features,
-        'possible_features': possible_features,
-        'pca': pca_final,
-        'is_olm': olm,
-        'the_intercept': the_intercept,
-        'the_slope': the_slope,
-        'the_intercept_X': intercept_x,
-        'the_slope_X': slope_x,
-    }
-
-    joblib.dump(model_data, os.path.join(out_dir_path, 'model_meta.pkl'))
-
-    if olm:
-        joblib.dump(model_final, os.path.join(out_dir_path, 'model_weights.pkl'))
-    else:
-        model_final.save(os.path.join(out_dir_path, 'model_weights.keras'))
-
     typer.echo(
-        f"Finished! Consult '{out_dir_path}training_statistics.txt' "
+        f"Finished! Consult '{out_dir / 'training_statistics.txt'}' "
         "to analyse your model's performance."
     )

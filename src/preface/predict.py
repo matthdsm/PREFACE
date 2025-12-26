@@ -2,8 +2,6 @@
 Predict module for PREFACE.
 """
 
-# pylint: disable=too-many-locals,too-many-branches,too-many-statements
-
 import os
 import json
 from typing import Optional, Union

@@ -14,12 +14,13 @@ classifiers = [
 dependencies = [
     "pandas>=2.3.3,<3",
     "numpy>=2.3.5,<3",
-    "scikit-learn>=1.8.0,<2",
+    "scikit-learn==1.8.0",
     "tensorflow>=2.20.0,<3",
     "matplotlib>=3.10.8,<4",
     "joblib>=1.5.3,<2",
     "statsmodels>=0.14.6,<0.15",
     "typer>=0.20.0,<0.21",
+    "pandera>=0.27.1,<0.28",
 ]
 
 [build-system]
