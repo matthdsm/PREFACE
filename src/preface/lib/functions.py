@@ -26,10 +26,14 @@ def preprocess_ratios(ratios_df: pd.DataFrame, exclude_chrs: list[str]) -> pd.Da
     # santize chr column
     ratios_df["chr"] = ratios_df["chr"].astype(str).str.replace("chr", "", regex=False)
     # exclude chromosomes
-    masked_ratios = ratios_df[~ratios_df["chr"].isin(exclude_chrs)]
+    masked_ratios = ratios_df[~ratios_df["chr"].isin(exclude_chrs)].copy()
     # add region column
     masked_ratios["region"] = (
-        f"{masked_ratios['chr']}:{masked_ratios['start']}-{masked_ratios['end']}"
+        masked_ratios["chr"]
+        + ":"
+        + masked_ratios["start"].astype(str)
+        + "-"
+        + masked_ratios["end"].astype(str)
     )
     # drop chr, start, end columns
     masked_ratios = masked_ratios.drop(columns=["chr", "start", "end"])
