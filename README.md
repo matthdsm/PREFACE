@@ -10,7 +10,7 @@ A share of all cell-free DNA fragments isolated from maternal plasma during preg
 
 Each sample (whether it is used for training or for predicting) should be passed to PREFACE in the format shown below. During benchmarking, using a bin size of 100 kb (others might work equally well), copy number normalization was performed by [WisecondorX](https://github.com/CenterForMedicalGeneticsGhent/WisecondorX/), yet PREFACE is not limited to any copy number alteration software, however, the default output of WisecondorX is directly interpretable by PREFACE.  
 
-- Example: ```./examples/infile.bed```  
+- Example: ```./examples/ratios.bed```  
 - Tab-separated file with at least four columns.  
 - The name of these columns (passed as a header) must be 'chr', 'start', 'end' and 'ratio'.  
     - The possible values of 'chr' are 1 until 22, and X and Y (uppercase).  
@@ -18,17 +18,17 @@ Each sample (whether it is used for training or for predicting) should be passed
     - The ratio can be unknown at certain loci (e.g. often seen at centromeres). Here, values should be expressed as 'NaN' or 'NA'.  
 - The order of rows does not matter. Yet, it is paramount that, for a certain line, file x deals with the same locus as file y. This implies, of course, that all copy number alteration files have the same number of lines.  
 
-### PREFACE's config.txt
+### PREFACE's samplesheet.tsv
 
-For training, PREFACE requires a config file.  
+For training, PREFACE requires a samplesheet file.  
 
-- Example: ```./examples/config.txt```  
-- Tab-separated file with at least four columns.  
-- The name of these columns (passed as a header) must be 'ID', 'filepath', 'gender' and 'FF'.  
+- Example: ```./examples/samplesheet.tsv```  
+- TSV file with at least four columns.  
+- The name of these columns (passed as a header) must be 'ID', 'filepath', 'sex' and 'FF'.  
     - 'ID' is used to specify a mandatory unique identifier to each of the samples.  
-    - The 'filepath' column holds the full absolute path of the training copy number alteration files.  
-    - The possible values for 'gender' are either 'M' (male) or 'F' (female), representing fetal gender. Twins/triplets/... can be included if they are all male or all female.  
-    - The 'FF' column contains the response variable (the 'true' fetal fraction). One can use any method he/she believes performs best at quantifying the actual fetal fraction. PREFACE was benchmarked using the number of mapped Y-reads, referred to as FFY. As FFY is not informative for female fetuses, this measure is ignored for cases labeled with 'F', unless the `--femprop` flag is given (see below).  
+    - The 'filepath' column holds the full absolute path of the training copy number alteration files (.bed).  
+    - The possible values for 'sex' are either 'M' (male) or 'F' (female), representing fetal gender.  
+    - The 'FF' column contains the response variable (the 'true' fetal fraction). One can use any method he/she believes performs best at quantifying the actual fetal fraction. PREFACE was benchmarked using the number of mapped Y-reads, referred to as FFY.
 
 ## Installation & Setup
 
@@ -43,27 +43,28 @@ This will install the `PREFACE` command-line tool.
 ## Model training
 
 ```bash
-PREFACE train --config path/to/config.txt --outdir path/to/dir/ [optional arguments]
+PREFACE train --samplesheet path/to/samplesheet.tsv [optional arguments]
 ```
 
-<br>Optional argument <br><br> | Function  
-:--- | :---  
-`--nfeat x` | Number of principal components to use during modeling. (default: x=50)  
-`--hidden x` | Number of hidden layers used in neural network. Use with caution. (default: x=2)  
-`--cpus x` | Use for multiprocessing, number of requested threads. (default: x=1)  
-`--femprop` | When using FFY as FF (recommended), FF labels for female fetuses are irrelevant, and should be ignored in the supervised learning phase (default). If this behavior is not desired, use this flag, which demands that the given FFs for female fetuses are proportional to their actual FF.  
-`--olm` | It might be possible the neural network does not converge; or for your kind of data/sample size, an ordinary linear model might be a better option. In these cases, use this flag.  
-`--noskewcorrect` | This flag ascertains the best fit for most (instead of all) of the data is generated. Mostly not recommended.  
+| Optional argument | Function |
+| :--- | :--- |
+| `--impute` | Impute missing values instead of assuming zero. |
+| `--exclude-chrs` | Chromosomes to exclude from training (default: 13, 18, 21, X, Y). |
+| `--nfolds x` | Number of folds for cross-validation (default: 5). |
+| `--nfeat x` | Number of features (PCA components) (default: 50). |
+| `--tune` | Enable automatic hyperparameter tuning. |
+| `--model [neural\|xgboost]` | Type of model to train (default: neural). |
 
 ## Predicting
 
 ```bash
-PREFACE predict --infile path/to/infile.bed --model path/to/model_directory [optional arguments]
+PREFACE predict --infile path/to/infile.bed --model path/to/model_directory
 ```
 
-<br>Optional argument <br><br> | Function  
-:--- | :---  
-`--json x` | Predictions are written to stdout. Use this flag for json format. Optionally provide 'x' to generate .json file x.  
+| Argument | Function |
+| :--- | :--- |
+| `--infile` | Path to input BED file. |
+| `--model` | Path to the trained model directory. |
 
 ## Model optimization  
 
@@ -73,27 +74,32 @@ PREFACE predict --infile path/to/infile.bed --model path/to/model_directory [opt
         - A 'non-random' phase (representing PCs that explain variance caused by natural Gaussian noise).  
     - An optimal `--nfeat` captures the 'random' phase (as shown in the example at `./examples/overall_performance.png`). Capturing too much of the 'non-random' phase could lead to convergence problems during modeling.  
     - If you are not satisfied with the performance of your model or with the position of `--nfeat`, re-run with a different number of features.  
-- Note that the final model will probably be a bit more accurate than what is claimed by the performance statistics. This is because PREFACE uses a cross-validation strategy where 10% of the (male) samples are excluded from training, after which these 10% serve as validation cases. This process is repeated 10 times. Therefore, the final performance measurements are based on models trained with only 90% of the (male) fetuses, yet the resulting model is trained with all provided cases.  
+- Note that the final model will probably be a bit more accurate than what is claimed by the performance statistics. This is because PREFACE uses a cross-validation strategy where a subset of samples are excluded from training, after which these serve as validation cases. This process is repeated `n` times (default 5). Therefore, the final performance measurements are based on models trained with only partial data, yet the resulting model is trained with all provided cases.  
 
 # Utilities
 
 ## NPZ to Parquet Converter
 
-This script converts NumPy `.npz` files into one or more Parquet files, facilitating easier exploration and analysis of the stored numerical data using tools like Pandas. Each array within an `.npz` file will be converted to a separate Parquet file.
+This script converts NumPy `.npz` files into one or more Parquet files, facilitating easier exploration and analysis of the stored numerical data using tools like Pandas.
 
 ### Usage
 
 ```bash
-npz-to-parquet <npz_file1> [<npz_file2> ...] [-o <output_directory>]
+PREFACE utils npz-to-parquet <npz_file1> [<npz_file2> ...] [-o <output_directory>]
 ```
 
 - `<npz_file1> [<npz_file2> ...]`: One or more paths to the input `.npz` files.
 - `-o, --output-dir`: (Optional) Directory to save the output Parquet files. Defaults to the current directory (`.`).
 
-### Example
+## FFY Calculator
 
-To convert `data.npz` and `features.npz` and save the output Parquet files in a directory named `parquet_output`:
+Calculates Fetal Fraction from Y-chromosome reads (from WisecondorX NPZ output).
+
+### Usage
 
 ```bash
-npz-to-parquet data.npz features.npz -o parquet_output
+PREFACE utils ffy <wisecondorx_npz> [--sex-cutoff <cutoff>]
 ```
+
+- `<wisecondorx_npz>`: Path to WisecondorX output NPZ file.
+- `--sex-cutoff`: (Optional) Cutoff for sex determination (default: 0.2).

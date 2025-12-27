@@ -3,25 +3,21 @@ PREFACE CLI entry point.
 """
 
 import typer
-import importlib.metadata
 
-
+from preface import __version__
 from preface.predict import preface_predict
 from preface.train import preface_train
-from preface.utils.npz_to_parquet import npz_to_parquet
 from preface.utils.ffy import wisecondorx_ffy
-from preface import __version__
+from preface.utils.npz_to_parquet import npz_to_parquet
 
 # Version
 VERSION: str = __version__
-AUTHORS: str = importlib.metadata.metadata("preface")["authors"]
-
-print(AUTHORS)
 
 # Initialize Typer app
 app = typer.Typer(help="PREFACE - PREdict FetAl ComponEnt")
 app.command(name="predict")(preface_predict)
 app.command(name="train")(preface_train)
+app.command(name="version")(lambda: typer.echo(f"PREFACE version {VERSION}"))
 
 # Utilities group
 utils_app = typer.Typer(help="Utility scripts")

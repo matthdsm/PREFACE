@@ -9,9 +9,15 @@ import typer
 
 def wisecondorx_ffy(
     wisecondorx_npz: Path = typer.Argument(
-        ..., help="Path to WisecondorX NPZ file", exists=True, file_okay=True, dir_okay=False
+        ...,
+        help="Path to WisecondorX NPZ file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
     ),
-    sex_cutoff: float = typer.Option(0.2, "--sex-cutoff", help="Cutoff for sex determination"),
+    sex_cutoff: float = typer.Option(
+        0.2, "--sex-cutoff", help="Cutoff for sex determination"
+    ),
 ) -> dict:
     """
     Calculate fetal fraction from Y chromosome (FFY) using WisecondorX output.

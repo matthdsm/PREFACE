@@ -41,50 +41,30 @@ def preprocess_ratios(ratios_df: pd.DataFrame, exclude_chrs: list[str]) -> pd.Da
     return masked_ratios
 
 
-def build_multi_output_nn(input_dim: int, n_neurons: int):
-    """Build a multi-output neural network for regression and classification."""
-    inputs = layers.Input(shape=(input_dim,))
-    x = layers.Dense(n_neurons, activation="relu")(inputs)
-    x = layers.Dense(n_neurons // 2, activation="relu")(x)
-    # Head 1: Regression
-    reg_out = layers.Dense(1, activation="linear", name="reg_output")(x)
-
-    # Head 2: Classification
-    class_out = layers.Dense(1, activation="sigmoid", name="class_output")(x)
-
-    nn = Model(inputs=inputs, outputs=[reg_out, class_out])
-    nn.compile(
-        optimizer="adam",
-        loss={"reg_output": "mse", "class_output": "binary_crossentropy"},
-        loss_weights={"reg_output": 1.0, "class_output": 1.0},
-    )
-    return nn
-
-
-class PCALayer(layers.Layer):
-    def __init__(self, pca, **kwargs):
-        super(
-            PCALayer,
-            self,
-        ).__init__(**kwargs)
-        # Convert Scikit-Learn attributes to TensorFlow constants
-        self.components = tf.constant(pca.components_.T, dtype=tf.float32)
-
-    def call(self, inputs):
-        # PCA: Matrix multiplication with components
-        pca_data = tf.matmul(inputs, self.components)
-        return pca_data
-
-
 def build_ensemble(n_feat: int, pca: PCA, models: list[Model]) -> Model:
     """
     Build an ensemble model that averages predictions from multiple fold models.
     Each fold model is assumed to have two outputs: regression and classification.
     """
+
     # Add input layer
     ensemble_input = layers.Input(shape=(n_feat,), name="input")
 
     # Add PCA layer
+    class PCALayer(layers.Layer):
+        def __init__(self, pca, **kwargs):
+            super(
+                PCALayer,
+                self,
+            ).__init__(**kwargs)
+            # Convert Scikit-Learn attributes to TensorFlow constants
+            self.components = tf.constant(pca.components_.T, dtype=tf.float32)
+
+        def call(self, inputs):
+            # PCA: Matrix multiplication with components
+            pca_data = tf.matmul(inputs, self.components)
+            return pca_data
+
     pca_feat = PCALayer(pca, name="pca")(ensemble_input)
 
     # Add each fold model as a sub-network
@@ -105,7 +85,9 @@ def build_ensemble(n_feat: int, pca: PCA, models: list[Model]) -> Model:
 
     # Build and return ensemble model
     return Model(
-        inputs=ensemble_input, outputs=[avg_reg_output, avg_class_output], name="PREFACE_model"
+        inputs=ensemble_input,
+        outputs=[avg_reg_output, avg_class_output],
+        name="PREFACE_model",
     )
 
 
@@ -257,6 +239,10 @@ def plot_regression_performance(
     }
 
 
+def plot_classification_performance():
+    pass
+
+
 def fit_rlm(x_values: np.ndarray, y_values: np.ndarray):
     """
     Fit robust linear model (RLM) and return intercept and slope.
@@ -305,9 +291,7 @@ def plot_ffx(
     )
     ax.legend()
     ax = axes[1]
-    y_values_corrected = (
-        (y_values - intercept) / slope if slope != 0 else y_values
-    )
+    y_values_corrected = (y_values - intercept) / slope if slope != 0 else y_values
     ax.scatter(x_values, y_values_corrected, s=10, c="black", alpha=0.6)
     ax.set_xlabel("FF (%)")
     ax.set_ylabel("FFX (%)")
@@ -322,4 +306,3 @@ def plot_ffx(
     plt.tight_layout()
     plt.savefig(out_dir_path / "FFX.png", dpi=300)
     plt.close()
-

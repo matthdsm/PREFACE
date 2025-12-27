@@ -71,7 +71,9 @@ def _convert_single_npz(npz_path: str, output_dir: str) -> None:
 
 
 def npz_to_parquet(
-    npz_files: List[str] = typer.Argument(..., help="One or more .npz files to convert."),
+    npz_files: List[str] = typer.Argument(
+        ..., help="One or more .npz files to convert."
+    ),
     output_dir: str = typer.Option(
         ".", "-o", "--output-dir", help="Directory to save the output Parquet files."
     ),

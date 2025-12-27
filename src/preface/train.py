@@ -6,6 +6,7 @@ import os
 import time
 from pathlib import Path
 
+from enum import Enum
 import pandas as pd
 import typer
 from pandera.errors import SchemaError
@@ -19,33 +20,65 @@ from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
 
 from preface.lib.functions import (
     build_ensemble,
-    build_multi_output_nn,
     plot_regression_performance,
+    plot_classification_performance,
     preprocess_ratios,
 )
+from preface.lib.xgboost import xgboost_tune, xgboost_fit
+from preface.lib.neural import neural_tune, neural_fit
 from preface.lib.schemas import SampleDataSchema, SampleSchema
 
 # Constants
-EXCLUDE_CHRS: list[str] = ['13', '18', '21', 'X', 'Y']
+EXCLUDE_CHRS: list[str] = ["13", "18", "21", "X", "Y"]
+
+
+class ModelOptions(Enum):
+    NEURAL = "neural"
+    XGBOOST = "xgboost"
+
+
+class ModeOptions(Enum):
+    TRAIN = "train"
+    TUNE = "tune"
 
 
 def preface_train(
-    samplesheet: Path = typer.Option(..., "--samplesheet", help="Path to samplesheet file"),
-    out_dir: Path = typer.Option(..., "--outdir", help="Output directory"),
-    n_feat: int = typer.Option(50, "--nfeat", help="Number of features (PCA components)"),
-    n_folds: int = typer.Option(5, "--nfolds", help="Number of folds for cross-validation"),
-    n_neurons: int = typer.Option(2, "--neurons", help="Number of initial neurons in neural network"),
-    exclude_chrs: list[str] = typer.Option(EXCLUDE_CHRS, "--exclude-chrs", help="Chromosomes to exclude from training"),
-    impute: bool = typer.Option(False, "--impute", help="Impute missing values instead of assuming zero")
+    samplesheet: Path = typer.Option(
+        ..., "--samplesheet", help="Path to samplesheet file"
+    ),
+    out_dir: Path = typer.Option(os.getcwd(), "--outdir", help="Output directory"),
+    # Data handling
+    impute: bool = typer.Option(
+        False, "--impute", help="Impute missing values instead of assuming zero"
+    ),
+    exclude_chrs: list[str] = typer.Option(
+        EXCLUDE_CHRS, "--exclude-chrs", help="Chromosomes to exclude from training"
+    ),
+    # cross validation options
+    n_folds: int = typer.Option(
+        5, "--nfolds", help="Number of folds for cross-validation"
+    ),
+    # PCA options
+    n_feat: int = typer.Option(
+        50, "--nfeat", help="Number of features (PCA components)"
+    ),
+    # Mode options
+    tune: bool = typer.Option(
+        False, "--tune", help="Enable automatic hyperparameter tuning"
+    ),
+    # Model options
+    model: ModelOptions = typer.Option(
+        ModelOptions.NEURAL, "--model", help="Type of model to train"
+    ),
 ) -> None:
     """
-    Train the PREFACE model.
+    Train and optionally tune the PREFACE model.
     """
     start_time: float = time.time()
 
     # Load samplesheet
     samplesheet_data: pd.DataFrame = pd.read_csv(
-        samplesheet, comment='#', dtype={'sex': str, 'ID': str}, index_col='ID'
+        samplesheet, comment="#", dtype={"sex": str, "ID": str}, index_col="ID"
     )
 
     # Validate samplesheet
@@ -75,16 +108,26 @@ def preface_train(
 
     # parse data
     for _, sample in samplesheet_data.iterrows():
-        if not Path(sample['filepath']).exists() or not Path(sample['filepath']).is_file():
+        if (
+            not Path(sample["filepath"]).exists()
+            or not Path(sample["filepath"]).is_file()
+        ):
             typer.echo(f"Error: File '{sample['filepath']}' does not exist.")
             raise typer.Exit(code=1)
         # load ratios (bed format)
-        ratios = pd.read_csv(sample['filepath'], dtype={'chr': str, 'start': int, 'end': int, 'ratio': float}, sep='\t', header=0)
+        ratios = pd.read_csv(
+            sample["filepath"],
+            dtype={"chr": str, "start": int, "end": int, "ratio": float},
+            sep="\t",
+            header=0,
+        )
         # validate ratios
         try:
             sample_data_schema.validate(ratios)
         except SchemaError as e:
-            typer.echo(f"Error validating sample data for file {sample['filepath']}: {e}")
+            typer.echo(
+                f"Error validating sample data for file {sample['filepath']}: {e}"
+            )
             raise typer.Exit(code=1)
 
         # check number of bins consistency
@@ -99,9 +142,9 @@ def preface_train(
         masked_ratios = preprocess_ratios(ratios, exclude_chrs)
 
         # add sample metadata columns to transposed ratios
-        masked_ratios['id'] = sample['ID']
-        masked_ratios['sex'] = sample['sex']
-        masked_ratios['ff'] = sample['FF']
+        masked_ratios["id"] = sample["ID"]
+        masked_ratios["sex"] = sample["sex"]
+        masked_ratios["ff"] = sample["FF"]
 
         # add to list
         ratios_list.append(masked_ratios)
@@ -111,7 +154,7 @@ def preface_train(
     ratios_per_sample: pd.DataFrame = pd.concat(ratios_list, axis=0)
 
     # set index to ID column
-    ratios_per_sample = ratios_per_sample.set_index('id')
+    ratios_per_sample = ratios_per_sample.set_index("id")
 
     typer.echo("Creating training frame...")
 
@@ -131,12 +174,14 @@ def preface_train(
 
         typer.echo("Imputing missing values using MICE...")
 
-        imputer = IterativeImputer(random_state=42, max_iter=10, initial_strategy='mean')
+        imputer = IterativeImputer(
+            random_state=42, max_iter=10, initial_strategy="mean"
+        )
         training_df_array = imputer.fit_transform(ratios_per_sample)
         ratios_per_sample = pd.DataFrame(
             training_df_array,
             index=ratios_per_sample.index,
-            columns=ratios_per_sample.columns
+            columns=ratios_per_sample.columns,
         )
     # Option 2: Assume missing values are zero (no change)
     else:
@@ -144,24 +189,29 @@ def preface_train(
         ratios_per_sample = ratios_per_sample.fillna(0.0)
 
     # Split into features and labels
-    x_all: pd.DataFrame = ratios_per_sample.drop(columns=['sex', 'ff'])
+    x_all: pd.DataFrame = ratios_per_sample.drop(columns=["sex", "ff"])
+    y_all: pd.DataFrame = ratios_per_sample[["sex", "ff"]]
     # labels for regression (fetal fraction)
-    y_ff_all = ratios_per_sample['ff']
+    y_ff_all = y_all["ff"]
     # labels for classification (sex)
-    y_sex_all = (
-        ratios_per_sample['sex']
-        .map({"M": 1, "F": 0})
-        .astype(float)
-        .values
-    )
+    y_sex_all = y_all["sex"].map({"M": 1, "F": 0})
 
     # Reduce dimensionality with PCA
     global_pca = PCA(n_components=n_feat)
     x_all_pca = global_pca.fit_transform(x_all)
 
-    # Set up training
+    params = {}
+    if tune:
+        # Enable hyperparameter tuning
+        typer.echo("Tuning hyperparameters...")
+        if model == ModelOptions.NEURAL:
+            params = neural_tune(x_all_pca, y_all.to_numpy(), out_dir)
+        elif model == ModelOptions.XGBOOST:
+            params = xgboost_tune(x_all_pca, y_all.to_numpy(), out_dir)
+
+    # Set up training (k-fold cross-validation)
     # Create directory to store fold metrics
-    os.makedirs(out_dir / 'training_folds', exist_ok=True)
+    os.makedirs(out_dir / "training_folds", exist_ok=True)
     fold_metrics = []
     fold_models: list[keras.Model] = []
 
@@ -172,48 +222,36 @@ def preface_train(
 
         # split into train and test sets
         x_train, x_test = x_all_pca[train_idx], x_all_pca[test_idx]
-        y_ff_train, y_ff_test = y_ff_all[train_idx], y_ff_all[test_idx]
-        y_sex_train, y_sex_test = y_sex_all[train_idx], y_sex_all[test_idx]
-
-        # Create new model instance
-        model = build_multi_output_nn(input_dim=n_feat, n_neurons=n_neurons)
+        y_train, y_test = y_all.iloc[train_idx], y_all.iloc[test_idx]
+        y_train_reg, y_test_reg = y_ff_all[train_idx], y_ff_all[test_idx]
+        y_train_class, y_test_class = y_sex_all[train_idx], y_sex_all[test_idx]
 
         # Train
         typer.echo(f"Training fold {fold}...")
-        # Early stopping callback
-        early_stop = keras.callbacks.EarlyStopping(
-            monitor='val_loss',
-            patience=5,
-            restore_best_weights=True
-        )
-        # Fit model
-        model.fit(
-            x_train,
-            {"reg_output": y_ff_train, "class_output": y_sex_train},
-            validation_data=(
+        if model == ModelOptions.NEURAL:
+            model, predictions = neural_fit(
+                x_train,
                 x_test,
-                {"reg_output": y_ff_test, "class_output": y_sex_test},
-            ),
-            epochs=100,
-            batch_size=32,
-            verbose=1,
-            callbacks=[early_stop],
-        )
+                y_train_reg.to_numpy(),
+                y_train_class.to_numpy(),
+                y_test_reg.to_numpy(),
+                y_test_class.to_numpy(),
+                n_feat,
+                params,
+            )
+        elif model == ModelOptions.XGBOOST:
+            model, predictions = xgboost_fit(
+                x_train, x_test, y_train.to_numpy(), y_test.to_numpy(), params
+            )
 
         # Save fold model
-        model.save(out_dir / 'training_folds' / f'fold_{fold}.keras')
+        model.save(out_dir / "training_folds" / f"fold_{fold}.keras")  # type: ignore
         fold_models.append(model)
-
-        # Evaluate
-        predictions = model.predict(x_test)
-        y_ff_pred = predictions[0].flatten()
-        class_pred_probs = predictions[1].flatten()
-        class_pred = (class_pred_probs >= 0.5).astype(int)
 
         # Plot regression performance
         reg_perf = plot_regression_performance(
-            y_ff_pred,
-            y_ff_test.to_numpy(),
+            predictions["regression_predictions"],
+            y_test_reg.to_numpy(),
             global_pca.explained_variance_ratio_,
             n_feat,
             "PREFACE (%)",
@@ -221,31 +259,34 @@ def preface_train(
             out_dir / "training_folds" / f"fold_{fold}_regression.png",
         )
 
-        # Calculate metrics
+        # Plot classification performance
+        plot_classification_performance()
+
+        # return metrics
         metrics: dict = {
             # fold number
-            'fold': fold,
+            "fold": fold,
             # regression metrics
-            'ff_mae': mean_absolute_error(y_ff_test, y_ff_pred),
-            'ff_r2': r2_score(y_ff_test, y_ff_pred),
-            'ff_intercept': reg_perf['intercept'],
-            'ff_slope': reg_perf['slope'],
+            "ff_mae": mean_absolute_error(
+                y_test_reg, predictions["regression_predictions"]
+            ),
+            "ff_r2": r2_score(y_test_reg, predictions["regression_predictions"]),
+            "ff_intercept": reg_perf["intercept"],
+            "ff_slope": reg_perf["slope"],
             # classification metrics
-            'sex_f1': f1_score(y_sex_test, class_pred), # type: ignore
-            'sex_auc': roc_auc_score(y_sex_test, class_pred_probs) # type: ignore
+            "sex_f1": f1_score(y_test_class, predictions["class_predictions"]),
+            "sex_auc": roc_auc_score(y_test_class, predictions["class_probabilities"]),
         }
         fold_metrics.append(metrics)
 
     # Save fold metrics to a DataFrame
     fold_metrics_df = pd.DataFrame(fold_metrics)
-    fold_metrics_df.to_csv(
-        out_dir / 'training_fold_metrics.csv', index=False
-    )
+    fold_metrics_df.to_csv(out_dir / "training_fold_metrics.csv", index=False)
 
     # Build ensemble model from fold models
     typer.echo("Building ensemble model from fold models...")
     ensemble_model = build_ensemble(len(x_all.columns), global_pca, fold_models)
-    ensemble_model.save(out_dir / 'PREFACE')
+    ensemble_model.save(out_dir / "PREFACE")
 
     # Final evaluation on all training data
     typer.echo("Evaluating final model on all training data...")
@@ -255,14 +296,12 @@ def preface_train(
         y_ff_all.to_numpy(),
         global_pca.explained_variance_ratio_,
         n_feat,
-        'PREFACE (%)',
-        'FF (%)',
-        out_dir / 'overall_performance.png'
+        "PREFACE (%)",
+        "FF (%)",
+        out_dir / "overall_performance.png",
     )
 
-    with open(
-        out_dir / 'training_statistics.txt', 'w', encoding='utf-8'
-    ) as f:
+    with open(out_dir / "training_statistics.txt", "w", encoding="utf-8") as f:
         f.write(
             f"""PREFACE - PREdict FetAl ComponEnt
             Training time: {time.time() - start_time:.0f} seconds
