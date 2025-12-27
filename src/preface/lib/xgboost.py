@@ -1,5 +1,4 @@
 from pathlib import Path
-
 import numpy as np
 import numpy.typing as npt
 import optuna

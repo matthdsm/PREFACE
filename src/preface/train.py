@@ -5,11 +5,11 @@ Training module for PREFACE.
 import os
 import time
 from pathlib import Path
+import logging
 
 from enum import Enum
 import pandas as pd
 import typer
-from pandera.errors import SchemaError
 import sklearn
 from sklearn.experimental import enable_iterative_imputer  # pylint: disable=unused-import # noqa: F401  # type: ignore
 from sklearn.impute import IterativeImputer
@@ -26,7 +26,6 @@ from preface.lib.functions import (
 )
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
 from preface.lib.neural import neural_tune, neural_fit
-from preface.lib.schemas import SampleDataSchema, SampleSchema
 
 # Constants
 EXCLUDE_CHRS: list[str] = ["13", "18", "21", "X", "Y"]
@@ -78,41 +77,30 @@ def preface_train(
 
     # Load samplesheet
     samplesheet_data: pd.DataFrame = pd.read_csv(
-        samplesheet, comment="#", dtype={"sex": str, "ID": str}, index_col="ID"
+        samplesheet, comment="#", sep="\t", dtype={"sex": str, "ID": str}
     )
-
-    # Validate samplesheet
-    samplesheet_schema = SampleSchema()
-    try:
-        samplesheet_schema.validate(samplesheet_data)
-    except SchemaError as e:
-        typer.echo(f"Error validating samplesheet: {e}")
-        raise typer.Exit(code=1)
 
     # Check samples
     if len(samplesheet_data) < n_feat:
-        typer.echo(f"Please provide at least {n_feat} labeled samples.")
+        logging.error(f"Please provide at least {n_feat} labeled samples.")
         raise typer.Exit(code=1)
 
     # Load all sample data
-    typer.echo("Loading samples...")
-
+    logging.info("Loading samples...")
     # instantiate lists for ratios
     ratios_list: list[pd.DataFrame] = []
-
-    # instantiate schema
-    sample_data_schema = SampleDataSchema()
 
     # instantiate number of bins checker
     number_of_bins: int = -1
 
     # parse data
-    for _, sample in samplesheet_data.iterrows():
+    for i, sample in samplesheet_data.iterrows():
+        logging.info(f"Processing sample {sample['ID']} ({i + 1}/{len(samplesheet_data)})...")  # type: ignore
         if (
             not Path(sample["filepath"]).exists()
-            or not Path(sample["filepath"]).is_file()
+            or not Path(sample["filepath"]).is_file()  # noqa: W503
         ):
-            typer.echo(f"Error: File '{sample['filepath']}' does not exist.")
+            logging.error(f"File '{sample['filepath']}' does not exist.")
             raise typer.Exit(code=1)
         # load ratios (bed format)
         ratios = pd.read_csv(
@@ -121,21 +109,13 @@ def preface_train(
             sep="\t",
             header=0,
         )
-        # validate ratios
-        try:
-            sample_data_schema.validate(ratios)
-        except SchemaError as e:
-            typer.echo(
-                f"Error validating sample data for file {sample['filepath']}: {e}"
-            )
-            raise typer.Exit(code=1)
 
         # check number of bins consistency
         number_of_bins_current = len(ratios)
         if number_of_bins == -1:
             number_of_bins = number_of_bins_current
         elif number_of_bins != number_of_bins_current:
-            typer.echo("Error: Input BED files have different numbers of bins.")
+            logging.error("Input BED files have different numbers of bins.")
             raise typer.Exit(code=1)
 
         # preprocess ratios
@@ -143,20 +123,20 @@ def preface_train(
 
         # add sample metadata columns to transposed ratios
         masked_ratios["id"] = sample["ID"]
-        masked_ratios["sex"] = sample["sex"]
+        masked_ratios["sex"] = sample["sex"].map({"M": 1, "F": 0})
         masked_ratios["ff"] = sample["FF"]
 
         # add to list
         ratios_list.append(masked_ratios)
 
     # Stack dataframes horizontally
-    typer.echo("Merging sample data...")
+    logging.info("Merging sample data...")
     ratios_per_sample: pd.DataFrame = pd.concat(ratios_list, axis=0)
 
     # set index to ID column
     ratios_per_sample = ratios_per_sample.set_index("id")
 
-    typer.echo("Creating training frame...")
+    logging.info("Creating training frame...")
 
     # Handle NaN values
     # Identify the type of missingness (MCAR, MAR, MNAR). Here we assume MAR.
@@ -168,14 +148,13 @@ def preface_train(
         # Check sklearn version for compatibility
         sk_version = sklearn.__version__
         if sk_version != "1.8.0":
-            typer.echo(f"""Warning: PREFACE uses imputation and was developed using scikit-learn version 1.8.0.
+            logging.warning(f"""PREFACE uses imputation and was developed using scikit-learn version 1.8.0.
                         Since imputation is still experimental, it may be subject to change in other versions.
                         You are using version {sk_version}. Proceed with caution.""")
 
-        typer.echo("Imputing missing values using MICE...")
-
+        logging.info("Imputing missing values using MICE... This might take a while.")
         imputer = IterativeImputer(
-            random_state=42, max_iter=10, initial_strategy="mean"
+            random_state=42, max_iter=10, initial_strategy="mean", verbose=1
         )
         training_df_array = imputer.fit_transform(ratios_per_sample)
         ratios_per_sample = pd.DataFrame(
@@ -185,7 +164,7 @@ def preface_train(
         )
     # Option 2: Assume missing values are zero (no change)
     else:
-        typer.echo("Assuming missing values are zero...")
+        logging.info("Assuming missing values are zero...")
         ratios_per_sample = ratios_per_sample.fillna(0.0)
 
     # Split into features and labels
@@ -194,7 +173,7 @@ def preface_train(
     # labels for regression (fetal fraction)
     y_ff_all = y_all["ff"]
     # labels for classification (sex)
-    y_sex_all = y_all["sex"].map({"M": 1, "F": 0})
+    y_sex_all = y_all["sex"]
 
     # Reduce dimensionality with PCA
     global_pca = PCA(n_components=n_feat)
@@ -203,7 +182,7 @@ def preface_train(
     params = {}
     if tune:
         # Enable hyperparameter tuning
-        typer.echo("Tuning hyperparameters...")
+        logging.info("Tuning hyperparameters...")
         if model == ModelOptions.NEURAL:
             params = neural_tune(x_all_pca, y_all.to_numpy(), out_dir)
         elif model == ModelOptions.XGBOOST:
@@ -218,7 +197,7 @@ def preface_train(
     # Set up k-fold cross-validation
     kf: KFold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
     for fold, (train_idx, test_idx) in enumerate(kf.split(x_all_pca), 1):
-        typer.echo(f"Processing Fold {fold}/{n_folds}...")
+        logging.info(f"Processing Fold {fold}/{n_folds}...")
 
         # split into train and test sets
         x_train, x_test = x_all_pca[train_idx], x_all_pca[test_idx]
@@ -227,7 +206,7 @@ def preface_train(
         y_train_class, y_test_class = y_sex_all[train_idx], y_sex_all[test_idx]
 
         # Train
-        typer.echo(f"Training fold {fold}...")
+        logging.info(f"Training fold {fold}...")
         if model == ModelOptions.NEURAL:
             model, predictions = neural_fit(
                 x_train,
@@ -284,12 +263,12 @@ def preface_train(
     fold_metrics_df.to_csv(out_dir / "training_fold_metrics.csv", index=False)
 
     # Build ensemble model from fold models
-    typer.echo("Building ensemble model from fold models...")
+    logging.info("Building ensemble model from fold models...")
     ensemble_model = build_ensemble(len(x_all.columns), global_pca, fold_models)
     ensemble_model.save(out_dir / "PREFACE")
 
     # Final evaluation on all training data
-    typer.echo("Evaluating final model on all training data...")
+    logging.info("Evaluating final model on all training data...")
     predictions = ensemble_model.predict(x_all)
     info_overall = plot_regression_performance(
         predictions[0].flatten(),
@@ -310,7 +289,7 @@ def preface_train(
             """
         )
 
-    typer.echo(
+    logging.info(
         f"Finished! Consult '{out_dir / 'training_statistics.txt'}' "
         "to analyse your model's performance."
     )

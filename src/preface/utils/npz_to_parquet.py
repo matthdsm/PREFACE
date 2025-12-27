@@ -2,8 +2,7 @@
 Convert NPZ to Parquet utility.
 """
 
-# pylint: disable=broad-exception-caught
-
+import logging
 import os
 from typing import List
 
@@ -19,12 +18,12 @@ def _convert_single_npz(npz_path: str, output_dir: str) -> None:
     try:
         npz_data = np.load(npz_path, allow_pickle=True)
     except Exception as e:
-        typer.echo(f"Error loading {npz_path}: {e}", err=True)
+        logging.error(f"Error loading {npz_path}: {e}")
         return
 
     base_name = os.path.splitext(os.path.basename(npz_path))[0]
 
-    typer.echo(f"Processing NPZ file: {npz_path}")
+    logging.info(f"Processing NPZ file: {npz_path}")
 
     for key in npz_data.files:
         array = npz_data[key]
@@ -33,7 +32,7 @@ def _convert_single_npz(npz_path: str, output_dir: str) -> None:
         output_filename = f"{base_name}_{key}.parquet"
         output_filepath = os.path.join(output_dir, output_filename)
 
-        typer.echo(
+        logging.info(
             f"  Converting array '{key}' (shape: {array.shape}, "
             f"dtype: {array.dtype}) to {output_filepath}"
         )
@@ -53,10 +52,9 @@ def _convert_single_npz(npz_path: str, output_dir: str) -> None:
                     array, columns=[f"{key}_{i}" for i in range(array.shape[1])]
                 )
         elif array.ndim > 2:
-            typer.echo(
+            logging.warning(
                 f"  Warning: Array '{key}' has {array.ndim} dimensions. "
-                "Flattening for Parquet storage.",
-                err=True,
+                "Flattening for Parquet storage."
             )
             # Flatten to 1D and then treat as a single-column DataFrame
             df = pd.DataFrame({key: array.flatten()})
@@ -65,9 +63,9 @@ def _convert_single_npz(npz_path: str, output_dir: str) -> None:
 
         try:
             df.to_parquet(output_filepath, index=False)
-            typer.echo(f"  Successfully saved '{key}' to {output_filepath}")
+            logging.info(f"  Successfully saved '{key}' to {output_filepath}")
         except Exception as e:
-            typer.echo(f"  Error saving array '{key}' to Parquet: {e}", err=True)
+            logging.error(f"  Error saving array '{key}' to Parquet: {e}")
 
 
 def npz_to_parquet(
@@ -85,7 +83,7 @@ def npz_to_parquet(
 
     for npz_file in npz_files:
         if not os.path.exists(npz_file):
-            typer.echo(f"Error: Input file not found: {npz_file}", err=True)
+            logging.error(f"Error: Input file not found: {npz_file}")
             continue
         _convert_single_npz(npz_file, output_dir)
 

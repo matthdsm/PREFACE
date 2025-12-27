@@ -2,13 +2,32 @@
 PREFACE CLI entry point.
 """
 
-import typer
+import os
+import warnings
+import logging
+from rich.logging import RichHandler
 
-from preface import __version__
-from preface.predict import preface_predict
-from preface.train import preface_train
-from preface.utils.ffy import wisecondorx_ffy
-from preface.utils.npz_to_parquet import npz_to_parquet
+# Suppress warnings
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+warnings.filterwarnings("ignore", category=FutureWarning, module="keras")
+warnings.filterwarnings("ignore", category=FutureWarning, module="tensorflow")
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
+
+import typer  # noqa: E402
+
+from preface import __version__  # noqa: E402
+from preface.predict import preface_predict  # noqa: E402
+from preface.train import preface_train  # noqa: E402
+from preface.utils.ffy import wisecondorx_ffy  # noqa: E402
+from preface.utils.npz_to_parquet import npz_to_parquet  # noqa: E402
+
+# Configure logging
+logging.basicConfig(
+    level="NOTSET",
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, tracebacks_suppress=[typer])],
+)
 
 # Version
 VERSION: str = __version__
@@ -17,7 +36,7 @@ VERSION: str = __version__
 app = typer.Typer(help="PREFACE - PREdict FetAl ComponEnt")
 app.command(name="predict")(preface_predict)
 app.command(name="train")(preface_train)
-app.command(name="version")(lambda: typer.echo(f"PREFACE version {VERSION}"))
+app.command(name="version")(lambda: print(f"PREFACE version {VERSION}"))
 
 # Utilities group
 utils_app = typer.Typer(help="Utility scripts")

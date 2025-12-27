@@ -4,6 +4,7 @@ data/
 *.egg-info
 __pycache__/
 .gemini/
+*.ipynb
 # pixi environments
 .pixi/*
 !.pixi/config.toml

@@ -22,27 +22,20 @@ def preprocess_ratios(ratios_df: pd.DataFrame, exclude_chrs: list[str]) -> pd.Da
     """Preprocess ratios DataFrame by excluding chromosomes, adding region column and transposing.
     returns a x by 1 dataframe with regions as columns.
     """
-
+    # sanitize columns
+    ratios_df = ratios_df[["chr", "start", "end", "ratio"]].copy()
     # santize chr column
     ratios_df["chr"] = ratios_df["chr"].astype(str).str.replace("chr", "", regex=False)
     # exclude chromosomes
-    masked_ratios = ratios_df[~ratios_df["chr"].isin(exclude_chrs)].copy()
+    ratios_df = ratios_df[~ratios_df["chr"].isin(exclude_chrs)].copy()
     # add region column
-    masked_ratios["region"] = (
-        masked_ratios["chr"]
-        + ":"
-        + masked_ratios["start"].astype(str)
-        + "-"
-        + masked_ratios["end"].astype(str)
-    )
+    ratios_df["region"] = (ratios_df["chr"] + ":" + ratios_df["start"].astype(str) + "-" + ratios_df["end"].astype(str))  # type: ignore
     # drop chr, start, end columns
-    masked_ratios = masked_ratios.drop(columns=["chr", "start", "end"])
-    # set region as index
-    masked_ratios = masked_ratios.set_index("region")
-    # transpose to have regions as columns
-    masked_ratios = masked_ratios.T
+    ratios_df.drop(columns=["chr", "start", "end"], inplace=True)
+    # set region as index and transpose
+    ratios_df = ratios_df.set_index("region").T
 
-    return masked_ratios
+    return ratios_df
 
 
 def build_ensemble(n_feat: int, pca: PCA, models: list[Model]) -> Model:

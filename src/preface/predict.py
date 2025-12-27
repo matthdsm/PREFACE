@@ -4,9 +4,9 @@ Predict module for PREFACE.
 
 import pandas as pd
 import typer
-from tensorflow.keras import load_model  # pylint: disable=no-name-in-module,import-error # type: ignore
-from preface.lib.schemas import SampleDataSchema
+from tensorflow.keras.saving import load_model  # pylint: disable=no-name-in-module,import-error # type: ignore
 from preface.lib.functions import preprocess_ratios
+from rich import print
 
 
 def preface_predict(
@@ -21,13 +21,6 @@ def preface_predict(
     preface_model = load_model(model_path)
     ratios = pd.read_csv(infile, sep="\t")
 
-    # Validate input data
-    try:
-        SampleDataSchema().validate(ratios)
-    except Exception as e:
-        typer.echo(f"Validation error: {e}")
-        raise
-
     # Preprocess ratios
     preprocessed_ratios = preprocess_ratios(ratios, exclude_chrs=[])
 
@@ -39,8 +32,8 @@ def preface_predict(
     #     x_ratio = float(np.nan)
 
     ff_pred, sex_pred = preface_model.predict(preprocessed_ratios.values)
-    typer.echo(f"FF = {ff_pred:.4g}%")
-    typer.echo(f"Sex = {sex_pred}")
+    print(f"FF = {ff_pred:.4g}%")
+    print(f"Sex = {sex_pred}")
 
     # ffx: float = (x_ratio - intercept_x) / slope_x
 
@@ -60,11 +53,7 @@ def preface_predict(
 
     # projected_ratio = pca.transform(features_array)[:, :n_feat]
 
-    # prediction: float
-    # if is_olm:
-    #     prediction = float(model.predict(projected_ratio)[0])
-    # else:
-    #     prediction = float(model.predict(projected_ratio).flatten()[0])
+    # prediction = float(model.predict(projected_ratio).flatten()[0])
 
     # prediction = the_intercept + the_slope * prediction
 
@@ -75,7 +64,7 @@ def preface_predict(
     #         with open(json_output, "w", encoding="utf-8") as f:
     #             json.dump(json_dict, f)
     #     else:
-    #         typer.echo(json.dumps(json_dict))
+    #         print(json.dumps(json_dict))
     # else:
-    #     typer.echo(f"FFX = {ffx:.4g}%")
-    #     typer.echo(f"PREFACE = {prediction:.4g}%")
+    #     print(f"FFX = {ffx:.4g}%")
+    #     print(f"PREFACE = {prediction:.4g}%")
