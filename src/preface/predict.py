@@ -8,6 +8,7 @@ from preface.lib.functions import preprocess_ratios
 from rich import print
 from pathlib import Path
 import onnxruntime as ort
+import numpy as np
 
 
 def preface_predict(
@@ -20,57 +21,58 @@ def preface_predict(
 
     # Load model
     preface_model: ort.InferenceSession = ort.InferenceSession(model_path)
+    
+    # Check metadata for excluded chromosomes
+    meta = preface_model.get_modelmeta()
+    custom_props = meta.custom_metadata_map
+    
+    if "exclude_chrs" in custom_props:
+        exclude_str = custom_props["exclude_chrs"]
+        if exclude_str:
+            exclude_chrs = exclude_str.split(",")
+        else:
+            exclude_chrs = []
+        print(f"[dim]Using excluded chromosomes from model metadata: {exclude_chrs}[/dim]")
+    
     ratios: pd.DataFrame = pd.read_csv(infile, sep="\t")
 
     # Preprocess ratios
-    preprocessed_ratios = preprocess_ratios(ratios, exclude_chrs=[])
+    preprocessed_ratios = preprocess_ratios(ratios, exclude_chrs=exclude_chrs)
+    
+    # Convert to float32
+    input_data = preprocessed_ratios.values.astype(np.float32)
 
-    # x_bins = ratios[ratios["chr"] == "X"]
-    # x_ratio: float
-    # if len(x_bins) > 0:
-    #     x_ratio = float(2 ** np.mean(x_bins["ratio"].dropna()))
-    # else:
-    #     x_ratio = float(np.nan)
-
-    results = preface_model.run(None, {preface_model.get_inputs()[0].name: preprocessed_ratios.values})
-    ff_score = results[0][0][0]  # type: ignore
-    sex_prob = results[1][0][0]  # type: ignore
+    # Run inference
+    # We can rely on position 0, 1 or names.
+    # build_ensemble saves: final_ff_score, final_sex_prob
+    
+    # Get output names
+    output_names = [o.name for o in preface_model.get_outputs()]
+    
+    # Run
+    results = preface_model.run(output_names, {preface_model.get_inputs()[0].name: input_data})
+    
+    # Map results to meaningful variables
+    # If standard PREFACE model, names are specific.
+    # If unknown model, fallback to index.
+    
+    ff_score = None
+    sex_prob = None
+    
+    result_map = dict(zip(output_names, results))
+    
+    if "final_ff_score" in result_map:
+        ff_score = result_map["final_ff_score"][0][0]
+    elif len(results) > 0:
+        ff_score = results[0][0][0]
+        
+    if "final_sex_prob" in result_map:
+        sex_prob = result_map["final_sex_prob"][0][0]
+    elif len(results) > 1:
+        sex_prob = results[1][0][0]
+        
     sex_class = "Male" if sex_prob > 0.5 else "Female"
 
     print("--- Patient Report ---")
     print(f"Predicted FF Score: {ff_score:.4f}")
     print(f"Sex Probability:    {sex_prob:.4f} ({sex_class})")
-
-    # ffx: float = (x_ratio - intercept_x) / slope_x
-
-    # bin_table["feat_id"] = (
-    #     bin_table["chr"].astype(str)
-    #     + ":"
-    #     + bin_table["start"].astype(str)
-    #     + "-"
-    #     + bin_table["end"].astype(str)
-    # )
-
-    # ratio_map = bin_table.set_index("feat_id")["ratio"]
-    # features = ratio_map.reindex(possible_features)
-    # features = features.fillna(mean_features)
-
-    # features_array = features.values.reshape(1, -1)
-
-    # projected_ratio = pca.transform(features_array)[:, :n_feat]
-
-    # prediction = float(model.predict(projected_ratio).flatten()[0])
-
-    # prediction = the_intercept + the_slope * prediction
-
-    # json_dict = {"FFX": ffx / 100, "PREFACE": prediction / 100}
-
-    # if json_output:
-    #     if json_output not in ("stdout", ""):
-    #         with open(json_output, "w", encoding="utf-8") as f:
-    #             json.dump(json_dict, f)
-    #     else:
-    #         print(json.dumps(json_dict))
-    # else:
-    #     print(f"FFX = {ffx:.4g}%")
-    #     print(f"PREFACE = {prediction:.4g}%")

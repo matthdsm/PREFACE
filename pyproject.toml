@@ -30,6 +30,7 @@ dependencies = [
     "skl2onnx>=1.19.1,<2",
     "onnxconverter-common>=1.16.0,<2",
     "onnxruntime>=1.23.2,<2",
+    "tf2onnx>=1.8.4,<2",
 ]
 
 [build-system]

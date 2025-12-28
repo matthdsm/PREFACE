@@ -16,13 +16,19 @@ class ImputeOptions(Enum):
     KNN = "knn"        # impute missing values using k-nearest neighbors
 
 
-def impute_nan(values: npt.NDArray, method: ImputeOptions) -> npt.NDArray:
+def impute_nan(values: npt.NDArray, method: ImputeOptions) -> tuple[npt.NDArray, object]:
     """
     Handle NaN values
     Identify the type of missingness (MCAR, MAR, MNAR). Here we assume MAR.
     Here the input log2 ratios indicate relative coverage to a reference,
     we can either impute missing values or assume zero (no change).
+    
+    Returns:
+        tuple: (imputed_values, fitted_imputer)
+        Note: For ImputeOptions.ZERO, the fitted_imputer is None (handled manually).
     """
+    imputer = None
+    
     # Option 1: Impute NaN through MICE (Multiple Imputation by Chained Equations)
     if method == ImputeOptions.MICE:
         # Check sklearn version for compatibility
@@ -42,6 +48,8 @@ def impute_nan(values: npt.NDArray, method: ImputeOptions) -> npt.NDArray:
     elif method == ImputeOptions.ZERO:
         logging.info("Assuming missing values are zero...")
         imputed_values = np.where(np.isnan(values), 0.0, values)
+        # For ZERO, we don't have a sklearn imputer, but we can simulate one or handle it in export
+        imputer = None 
 
     # Option 3: Impute missing values by calculating mean
     elif method == ImputeOptions.MEAN:
@@ -49,7 +57,7 @@ def impute_nan(values: npt.NDArray, method: ImputeOptions) -> npt.NDArray:
         imputer = SimpleImputer(strategy="mean")
         imputed_values = imputer.fit_transform(values)
 
-    # Option 4: Impute missing values by calculating mean
+    # Option 4: Impute missing values by calculating median
     elif method == ImputeOptions.MEDIAN:
         logging.info("Imputing missing values using median strategy...")
         imputer = SimpleImputer(strategy="median")
@@ -61,5 +69,5 @@ def impute_nan(values: npt.NDArray, method: ImputeOptions) -> npt.NDArray:
         imputer = KNNImputer(n_neighbors=5)
         imputed_values = imputer.fit_transform(values)
 
-    return imputed_values
+    return imputed_values, imputer
 

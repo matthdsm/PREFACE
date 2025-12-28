@@ -3,13 +3,15 @@ Training module for PREFACE.
 """
 
 import os
-# import time
+import time
 from pathlib import Path
 import logging
 from enum import Enum
 import pandas as pd
 import typer
+import numpy as np
 import numpy.typing as npt
+import onnxruntime as ort
 from sklearn.decomposition import PCA
 from sklearn.metrics import f1_score, mean_absolute_error, r2_score, roc_auc_score
 from sklearn.model_selection import KFold
@@ -23,7 +25,7 @@ from preface.lib.functions import (
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
 from preface.lib.neural import neural_tune, neural_fit
 from preface.lib.impute import ImputeOptions, impute_nan
-# from preface.lib.ensemble import build_ensemble
+from preface.lib.ensemble import build_ensemble
 
 # Constants
 EXCLUDE_CHRS: list[str] = ["13", "18", "21", "X", "Y"]
@@ -59,14 +61,14 @@ def preface_train(
         False, "--tune", help="Enable automatic hyperparameter tuning"
     ),
     # Model options
-    model: ModelOptions = typer.Option(
+    model_type: ModelOptions = typer.Option(
         ModelOptions.NEURAL, "--model", help="Type of model to train"
     ),
 ) -> None:
     """
     Train and optionally tune the PREFACE model.
     """
-    # start_time: float = time.time()
+    start_time: float = time.time()
 
     # Load samplesheet
     samplesheet_data: pd.DataFrame = pd.read_csv(
@@ -139,14 +141,14 @@ def preface_train(
     if tune:
         # Enable hyperparameter tuning
         logging.info("Tuning hyperparameters...")
-        tuner = neural_tune if model == ModelOptions.NEURAL else xgboost_tune
+        tuner = neural_tune if model_type == ModelOptions.NEURAL else xgboost_tune
         train_params = tuner(x_all, y_all, n_feat, out_dir, impute)
 
     # Set up training (k-fold cross-validation)
     # Create directory to store fold metrics
     os.makedirs(out_dir / "training_folds", exist_ok=True)
     fold_metrics = []
-    fold_models: list[tuple[PCA, keras.Model]] = []
+    fold_models: list[tuple[object, PCA, keras.Model]] = []
 
     # Set up k-fold cross-validation
     kf: KFold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
@@ -161,8 +163,8 @@ def preface_train(
         y_test_reg: npt.NDArray = y_test[:, 1]
 
         # impute data
-        x_train = impute_nan(x_train, impute)
-        x_test = impute_nan(x_test, impute)
+        x_train, imputer = impute_nan(x_train, impute)
+        x_test, _ = impute_nan(x_test, impute)
 
         # reduce dimensionality with PCA for each fold to prevent data leakage
         fold_pca = PCA(n_components=n_feat)
@@ -171,7 +173,7 @@ def preface_train(
 
         # Train
         logging.info(f"Training fold {fold}...")
-        if model == ModelOptions.NEURAL:
+        if model_type == ModelOptions.NEURAL:
             model, predictions = neural_fit(
                 x_train,
                 x_test,
@@ -182,13 +184,13 @@ def preface_train(
             # Save fold model
             model.save(out_dir / "training_folds" / f"fold_{fold}.keras")  # type: ignore
 
-        elif model == ModelOptions.XGBOOST:
+        elif model_type == ModelOptions.XGBOOST:
             model, predictions = xgboost_fit(
                 x_train, x_test, y_train, y_test, train_params
             )
             model.save_model(out_dir / "training_folds" / f"fold_{fold}.bin")  # type: ignore
 
-        fold_models.append((fold_pca, model))
+        fold_models.append((imputer, fold_pca, model))
 
         # Plot regression performance
         reg_perf = plot_regression_performance(
@@ -202,7 +204,11 @@ def preface_train(
         )
 
         # Plot classification performance
-        plot_classification_performance()
+        plot_classification_performance(
+            predictions["class_probabilities"],
+            y_test_class,
+            out_dir / "training_folds" / f"fold_{fold}_classification.png",
+        )
 
         # return metrics
         metrics: dict = {
@@ -227,29 +233,54 @@ def preface_train(
 
     # Build ensemble model from fold models
     logging.info("Building ensemble model from fold models...")
-    # ensemble_model = build_ensemble(global_pca, fold_models, x_all.shape[1], out_dir / "PREFACE.onnx")
+    build_ensemble(
+        fold_models, 
+        x_all.shape[1], 
+        out_dir / "PREFACE.onnx",
+        metadata={"exclude_chrs": ",".join(exclude_chrs)}
+    )
 
-    # # Final evaluation on all training data
-    # logging.info("Evaluating final model on all training data...")
-    # predictions = ensemble_model.run()
-    # info_overall = plot_regression_performance(
-    #     predictions[0][0][0].flatten(),
-    #     y_ff_all,
-    #     global_pca.explained_variance_ratio_,
-    #     n_feat,
-    #     "PREFACE (%)",
-    #     "FF (%)",
-    #     out_dir / "overall_performance.png",
-    # )
+    # Final evaluation on all training data
+    logging.info("Evaluating final model on all training data...")
+    
+    # Load ONNX model
+    sess = ort.InferenceSession(out_dir / "PREFACE.onnx")
+    input_name = sess.get_inputs()[0].name
+    
+    # Handle NaNs for evaluation if ZERO strategy was used (since ONNX graph might expect clean input for that case)
+    if impute == ImputeOptions.ZERO:
+        x_all_eval = np.nan_to_num(x_all, nan=0.0)
+    else:
+        x_all_eval = x_all
 
-    # with open(out_dir / "training_statistics.txt", "w", encoding="utf-8") as f:
-    #     f.write(
-    #         f"""PREFACE - PREdict FetAl ComponEnt
-    #         Training time: {time.time() - start_time:.0f} seconds
-    #         Overall correlation (r): {info_overall["correlation"]:.4f}
-    #         Overall mean absolute error (MAE): {info_overall["mae"]:.4f} ± {info_overall["sd_diff"]:.4f}
-    #         """
-    #     )
+    x_all_eval = x_all_eval.astype(np.float32)
+    
+    predictions = sess.run(None, {input_name: x_all_eval})
+    y_ff_pred = predictions[0].flatten()
+    
+    y_ff_all = y_all[:, 1]
+
+    # Use first fold's PCA for visualization
+    first_pca = fold_models[0][1]
+
+    info_overall = plot_regression_performance(
+        y_ff_pred,
+        y_ff_all,
+        first_pca.explained_variance_ratio_,
+        n_feat,
+        "PREFACE (%)",
+        "FF (%)",
+        out_dir / "overall_performance.png",
+    )
+
+    with open(out_dir / "training_statistics.txt", "w", encoding="utf-8") as f:
+        f.write(
+            f"""PREFACE - PREdict FetAl ComponEnt
+            Training time: {time.time() - start_time:.0f} seconds
+            Overall correlation (r): {info_overall["correlation"]:.4f}
+            Overall mean absolute error (MAE): {info_overall["mae"]:.4f} ± {info_overall["sd_diff"]:.4f}
+            """
+        )
 
     logging.info(
         f"Finished! Consult '{out_dir / 'training_statistics.txt'}' "

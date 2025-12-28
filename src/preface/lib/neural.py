@@ -31,8 +31,8 @@ def neural_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, 
             y_train, y_val = targets[t_idx], targets[v_idx]
 
             # impute missing values
-            x_train = impute_nan(x_train, impute_option)
-            x_val = impute_nan(x_val, impute_option)
+            x_train, _ = impute_nan(x_train, impute_option)
+            x_val, _ = impute_nan(x_val, impute_option)
 
             # reduce dimensionality with PCA
             pca = PCA(n_components=n_components)
@@ -77,7 +77,8 @@ def multi_output_nn(
     learning_rate: float,
     dropout_rate: float,
 ) -> Model:
-    x = layers.Input(shape=(input_dim,))
+    input_layer = layers.Input(shape=(input_dim,))
+    x = input_layer
     for i in range(n_layers):
         x = layers.Dense(hidden_size // (2 ** i), activation="relu")(x)
         x = layers.Dropout(dropout_rate)(x)
@@ -87,7 +88,7 @@ def multi_output_nn(
     # Head 2: Classification
     class_out = layers.Dense(1, activation="sigmoid", name="class_output")(x)
 
-    nn = Model(inputs=x, outputs=[reg_out, class_out])
+    nn = Model(inputs=input_layer, outputs=[reg_out, class_out])
 
     nn.compile(
         optimizer=keras.optimizers.Adam(learning_rate=learning_rate),

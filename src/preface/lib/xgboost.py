@@ -39,8 +39,8 @@ def xgboost_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int,
             y_train, y_val = targets[t_idx], targets[v_idx]
 
             # impute missing values
-            x_train = impute_nan(x_train, impute_option)
-            x_val = impute_nan(x_val, impute_option)
+            x_train, _ = impute_nan(x_train, impute_option)
+            x_val, _ = impute_nan(x_val, impute_option)
 
             # Reduce dimensionality with PCA
             pca = PCA(n_components=n_components)
