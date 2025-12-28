@@ -12,7 +12,7 @@ from xgboost import XGBRegressor
 
 
 def build_ensemble(
-    pca_obj: PCA, models: list[Model | XGBRegressor], input_dim: int, output_path: Path
+    models: list[tuple[PCA, Model | XGBRegressor]], input_dim: int, output_path: Path
 ) -> tuple[ModelProto | GraphProto | FunctionProto]:
     """
     Save an ensemble of models (either Keras NNs or XGBoost regressors) combined with a PCA
@@ -23,8 +23,11 @@ def build_ensemble(
     pca_out_name = pca_onnx.graph.output[0].name  # type: ignore
 
     prefixed_models = []
-    model_type = "nn" if isinstance(models[0], Model) else "xgb"
     for i, m in enumerate(models):
+        pca = m[0]
+        model = m[1]
+        model_type = "nn" if isinstance(models[0], Model) else "xgb"
+        
         if model_type == "nn":
             m_onnx = onnxmltools.convert_keras(m, name=f"fold_{i}")
         elif model_type == "xgb":
