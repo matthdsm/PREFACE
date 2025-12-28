@@ -200,11 +200,6 @@ def preface_train(
     # labels for classification (sex)
     y_sex_all = y_all[:, 0]
 
-    # Global PCA fit on all data for later use in ensemble model
-    logging.info("Fitting global PCA...")
-    global_pca = PCA(n_components=n_feat)
-    global_pca.fit(x_all)
-
     params = {}
     if tune:
         # Enable hyperparameter tuning
@@ -218,7 +213,7 @@ def preface_train(
     # Create directory to store fold metrics
     os.makedirs(out_dir / "training_folds", exist_ok=True)
     fold_metrics = []
-    fold_models: list[keras.Model] = []
+    fold_models: list[tuple[PCA, keras.Model]] = []
 
     # Set up k-fold cross-validation
     kf: KFold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
@@ -255,7 +250,7 @@ def preface_train(
             )
             model.save_model(out_dir / "training_folds" / f"fold_{fold}.bin")  # type: ignore
 
-        fold_models.append(model)
+        fold_models.append((training_pca, model))
 
         # Plot regression performance
         reg_perf = plot_regression_performance(
