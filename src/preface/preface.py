@@ -23,7 +23,7 @@ from preface.utils.npz_to_parquet import npz_to_parquet  # noqa: E402
 
 # Configure logging
 logging.basicConfig(
-    level="NOTSET",
+    level="INFO",
     format="%(message)s",
     datefmt="[%X]",
     handlers=[RichHandler(rich_tracebacks=True, tracebacks_suppress=[typer])],
