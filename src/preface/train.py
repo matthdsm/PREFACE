@@ -9,10 +9,7 @@ import logging
 from enum import Enum
 import pandas as pd
 import typer
-import sklearn
 import numpy.typing as npt
-from sklearn.experimental import enable_iterative_imputer  # pylint: disable=unused-import # noqa: F401  # type: ignore
-from sklearn.impute import IterativeImputer, SimpleImputer, KNNImputer
 from sklearn.decomposition import PCA
 from sklearn.metrics import f1_score, mean_absolute_error, r2_score, roc_auc_score
 from sklearn.model_selection import KFold
@@ -25,6 +22,7 @@ from preface.lib.functions import (
 )
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
 from preface.lib.neural import neural_tune, neural_fit
+from preface.lib.impute import ImputeOptions, impute_nan
 # from preface.lib.ensemble import build_ensemble
 
 # Constants
@@ -34,13 +32,6 @@ EXCLUDE_CHRS: list[str] = ["13", "18", "21", "X", "Y"]
 class ModelOptions(Enum):
     NEURAL = "neural"
     XGBOOST = "xgboost"
-
-
-class ImputeOptions(Enum):
-    ZERO = "zero"  # assume missing values are zero
-    MICE = "mice"  # impute missing values using MICE
-    MEAN = "mean"  # impute missing values by calculating mean
-    KNN = "knn"    # impute missing values using k-nearest neighbors
 
 
 def preface_train(
@@ -140,74 +131,18 @@ def preface_train(
 
     logging.info("Creating training frame...")
 
-    # Handle NaN values
-    # Identify the type of missingness (MCAR, MAR, MNAR). Here we assume MAR.
-    # Since the input log2 ratios indicate relative coverage to a reference,
-    # we can either impute missing values with the mean ratio of that feature
-    # or assume zero (no change).
-    # Option 1: Impute NaN through MICE (Multiple Imputation by Chained Equations)
-    if impute == ImputeOptions.MICE:
-        # Check sklearn version for compatibility
-        sk_version = sklearn.__version__
-        if sk_version != "1.8.0":
-            logging.warning(f"""PREFACE uses imputation and was developed using scikit-learn version 1.8.0.
-                        Since imputation is still experimental, it may be subject to change in other versions.
-                        You are using version {sk_version}. Proceed with caution.""")
-
-        logging.info("Imputing missing values using MICE... This might take a while.")
-        imputer = IterativeImputer(
-            random_state=42, max_iter=10, initial_strategy="mean", verbose=2
-        )
-        logging.info("Fitting imputer to data...")
-        training_df_array = imputer.fit_transform(ratios_per_sample)
-        logging.info(f"Imputation completed. Sample of imputed data:\n{training_df_array[:10]}")
-
-        ratios_per_sample = pd.DataFrame(
-            training_df_array,
-            index=ratios_per_sample.index,
-            columns=ratios_per_sample.columns,
-        )
-    # Option 2: Assume missing values are zero (no change)
-    elif impute == ImputeOptions.ZERO:
-        logging.info("Assuming missing values are zero...")
-        ratios_per_sample = ratios_per_sample.fillna(0.0)
-
-    # Option 3: Impute missing values by calculating mean
-    elif impute == ImputeOptions.MEAN:
-        logging.info("Imputing missing values using mean strategy...")
-        imputer = SimpleImputer(strategy="mean")
-        ratios_per_sample = pd.DataFrame(
-            imputer.fit_transform(ratios_per_sample),
-            index=ratios_per_sample.index,
-            columns=ratios_per_sample.columns,
-        )
-
-    # Option 4: Impute missing values using k-nearest neighbors
-    elif impute == ImputeOptions.KNN:
-        logging.info("Imputing missing values using k-nearest neighbors...")
-        imputer = KNNImputer(n_neighbors=5)
-        ratios_per_sample = pd.DataFrame(
-            imputer.fit_transform(ratios_per_sample),
-            index=ratios_per_sample.index,
-            columns=ratios_per_sample.columns,
-        )
-
     # Split into features and labels
     x_all: npt.NDArray = ratios_per_sample.drop(columns=["sex", "ff"]).to_numpy()
     y_all: npt.NDArray = ratios_per_sample[["sex", "ff"]].to_numpy()
-    # labels for regression (fetal fraction)
-    y_ff_all = y_all[:, 1]
-    # labels for classification (sex)
-    y_sex_all = y_all[:, 0]
 
-    params = {}
+    train_params = {}
     if tune:
         # Enable hyperparameter tuning
         logging.info("Tuning hyperparameters...")
         if model == ModelOptions.NEURAL:
-            params = neural_tune(x_all, y_all, n_feat, out_dir)
+            train_params = neural_tune(x_all, y_all, n_feat, out_dir)
         elif model == ModelOptions.XGBOOST:
-            params = xgboost_tune(x_all, y_all, n_feat, out_dir)
+            train_params = xgboost_tune(x_all, y_all, n_feat, out_dir)
 
     # Set up training (k-fold cross-validation)
     # Create directory to store fold metrics
@@ -221,42 +156,47 @@ def preface_train(
         logging.info(f"Processing Fold {fold}/{n_folds}...")
 
         # split into train and test sets
-        # reduce dimensionality with PCA for each fold to prevent data leakage
-        training_pca = PCA(n_components=n_feat)
-        x_train_pca = training_pca.fit_transform(x_all[train_idx])
-        x_test_pca = training_pca.transform(x_all[test_idx])
+        x_train, x_test = x_all[train_idx], x_all[test_idx]
         y_train, y_test = y_all[train_idx], y_all[test_idx]
-        y_train_reg, y_test_reg = y_ff_all[train_idx], y_ff_all[test_idx]
-        y_train_class, y_test_class = y_sex_all[train_idx], y_sex_all[test_idx]
+
+        y_test_class: npt.NDArray = y_test[:, 0]
+        y_test_reg: npt.NDArray = y_test[:, 1]
+
+        # impute data
+        x_train = impute_nan(x_train, impute)
+        x_test = impute_nan(x_test, impute)
+
+        # reduce dimensionality with PCA for each fold to prevent data leakage
+        fold_pca = PCA(n_components=n_feat)
+        x_train = fold_pca.fit_transform(x_train)
+        x_test = fold_pca.transform(x_test)
 
         # Train
         logging.info(f"Training fold {fold}...")
         if model == ModelOptions.NEURAL:
             model, predictions = neural_fit(
-                x_train_pca,
-                x_test_pca,
-                y_train_reg,
-                y_train_class,
-                y_test_reg,
-                y_test_class,
-                params,
+                x_train,
+                x_test,
+                y_train,
+                y_test,
+                train_params,
             )
             # Save fold model
             model.save(out_dir / "training_folds" / f"fold_{fold}.keras")  # type: ignore
 
         elif model == ModelOptions.XGBOOST:
             model, predictions = xgboost_fit(
-                x_train_pca, x_test_pca, y_train, y_test, params
+                x_train, x_test, y_train, y_test, train_params
             )
             model.save_model(out_dir / "training_folds" / f"fold_{fold}.bin")  # type: ignore
 
-        fold_models.append((training_pca, model))
+        fold_models.append((fold_pca, model))
 
         # Plot regression performance
         reg_perf = plot_regression_performance(
             predictions["regression_predictions"],
             y_test_reg,
-            training_pca.explained_variance_ratio_,
+            fold_pca.explained_variance_ratio_,
             n_feat,
             "PREFACE (%)",
             "FF (%)",
@@ -287,8 +227,8 @@ def preface_train(
     fold_metrics_df = pd.DataFrame(fold_metrics)
     fold_metrics_df.to_csv(out_dir / "training_fold_metrics.csv", index=False)
 
-    # # Build ensemble model from fold models
-    # logging.info("Building ensemble model from fold models...")
+    # Build ensemble model from fold models
+    logging.info("Building ensemble model from fold models...")
     # ensemble_model = build_ensemble(global_pca, fold_models, x_all.shape[1], out_dir / "PREFACE.onnx")
 
     # # Final evaluation on all training data

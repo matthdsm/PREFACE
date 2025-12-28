@@ -92,10 +92,8 @@ def multi_output_nn(
 def neural_fit(
     x_train: npt.NDArray,
     x_test: npt.NDArray,
-    y_train_reg: npt.NDArray,
-    y_train_class: npt.NDArray,
-    y_test_reg: npt.NDArray,
-    y_test_class: npt.NDArray,
+    y_train: npt.NDArray,
+    y_test: npt.NDArray,
     params: dict,
 ) -> tuple[Model, dict]:
     """Build a multi-output neural network for regression and classification."""
@@ -106,6 +104,14 @@ def neural_fit(
         "learning_rate": 1e-3,
         "dropout_rate": 0.3,
     }
+
+    # Split targets
+    # Assume y[:, 0] = class (sex), y[:, 1] = regression (ff)
+    # TODO: this is very brittle, make it more robust
+    y_train_reg: npt.NDArray = y_train[:, 1]
+    y_train_class: npt.NDArray = y_train[:, 0]
+    y_test_reg: npt.NDArray = y_test[:, 1]
+    y_test_class: npt.NDArray = y_test[:, 0]
 
     # Early stopping callback
     early_stop = keras.callbacks.EarlyStopping(
