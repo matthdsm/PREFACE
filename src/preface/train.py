@@ -12,7 +12,7 @@ import typer
 import sklearn
 import numpy.typing as npt
 from sklearn.experimental import enable_iterative_imputer  # pylint: disable=unused-import # noqa: F401  # type: ignore
-from sklearn.impute import IterativeImputer
+from sklearn.impute import IterativeImputer, SimpleImputer, KNNImputer
 from sklearn.decomposition import PCA
 from sklearn.metrics import f1_score, mean_absolute_error, r2_score, roc_auc_score
 from sklearn.model_selection import KFold
@@ -36,9 +36,11 @@ class ModelOptions(Enum):
     XGBOOST = "xgboost"
 
 
-class ModeOptions(Enum):
-    TRAIN = "train"
-    TUNE = "tune"
+class ImputeOptions(Enum):
+    ZERO = "zero"  # assume missing values are zero
+    MICE = "mice"  # impute missing values using MICE
+    MEAN = "mean"  # impute missing values by calculating mean
+    KNN = "knn"    # impute missing values using k-nearest neighbors
 
 
 def preface_train(
@@ -47,8 +49,8 @@ def preface_train(
     ),
     out_dir: Path = typer.Option(os.getcwd(), "--outdir", help="Output directory"),
     # Data handling
-    impute: bool = typer.Option(
-        False, "--impute", help="Impute missing values instead of assuming zero"
+    impute: ImputeOptions = typer.Option(
+        ImputeOptions.ZERO, "--impute", help="Impute missing values"
     ),
     exclude_chrs: list[str] = typer.Option(
         EXCLUDE_CHRS, "--exclude-chrs", help="Chromosomes to exclude from training"
@@ -144,7 +146,7 @@ def preface_train(
     # we can either impute missing values with the mean ratio of that feature
     # or assume zero (no change).
     # Option 1: Impute NaN through MICE (Multiple Imputation by Chained Equations)
-    if impute:
+    if impute == ImputeOptions.MICE:
         # Check sklearn version for compatibility
         sk_version = sklearn.__version__
         if sk_version != "1.8.0":
@@ -166,9 +168,29 @@ def preface_train(
             columns=ratios_per_sample.columns,
         )
     # Option 2: Assume missing values are zero (no change)
-    else:
+    elif impute == ImputeOptions.ZERO:
         logging.info("Assuming missing values are zero...")
         ratios_per_sample = ratios_per_sample.fillna(0.0)
+
+    # Option 3: Impute missing values by calculating mean
+    elif impute == ImputeOptions.MEAN:
+        logging.info("Imputing missing values using mean strategy...")
+        imputer = SimpleImputer(strategy="mean")
+        ratios_per_sample = pd.DataFrame(
+            imputer.fit_transform(ratios_per_sample),
+            index=ratios_per_sample.index,
+            columns=ratios_per_sample.columns,
+        )
+
+    # Option 4: Impute missing values using k-nearest neighbors
+    elif impute == ImputeOptions.KNN:
+        logging.info("Imputing missing values using k-nearest neighbors...")
+        imputer = KNNImputer(n_neighbors=5)
+        ratios_per_sample = pd.DataFrame(
+            imputer.fit_transform(ratios_per_sample),
+            index=ratios_per_sample.index,
+            columns=ratios_per_sample.columns,
+        )
 
     # Split into features and labels
     x_all: npt.NDArray = ratios_per_sample.drop(columns=["sex", "ff"]).to_numpy()
