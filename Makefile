@@ -2,15 +2,15 @@ IMAGE_NAME ?= preface
 REGISTRY ?= quay.io
 USERNAME ?= matthdsm
 TAG ?= $(shell sed -n 's/^__version__ = "\(.*\)"/\1/p' src/preface/__init__.py)
-PLATFORMS ?= linux/amd64,linux/arm64
+PLATFORMS ?= linux/amd64
 
 .PHONY: build push bump-version
-
+	
 build:
-	docker buildx build --platform $(PLATFORMS) -t $(REGISTRY)/$(USERNAME)/$(IMAGE_NAME):$(TAG) .
+	docker build --platform $(PLATFORMS) -t $(REGISTRY)/$(USERNAME)/$(IMAGE_NAME):$(TAG) .
 
 push:
-	docker buildx build --platform $(PLATFORMS) -t $(REGISTRY)/$(USERNAME)/$(IMAGE_NAME):$(TAG) --push .
+	docker build --platform $(PLATFORMS) -t $(REGISTRY)/$(USERNAME)/$(IMAGE_NAME):$(TAG) --push .
 
 bump-version:
 	@if [ -z "$(v)" ]; then echo "Usage: make bump-version v=1.0.0"; exit 1; fi
