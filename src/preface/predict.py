@@ -21,56 +21,60 @@ def preface_predict(
 
     # Load model
     preface_model: ort.InferenceSession = ort.InferenceSession(model_path)
-    
+
     # Check metadata for excluded chromosomes
     meta = preface_model.get_modelmeta()
     custom_props = meta.custom_metadata_map
-    
+
     if "exclude_chrs" in custom_props:
         exclude_str = custom_props["exclude_chrs"]
         if exclude_str:
             exclude_chrs = exclude_str.split(",")
         else:
             exclude_chrs = []
-        print(f"[dim]Using excluded chromosomes from model metadata: {exclude_chrs}[/dim]")
-    
+        print(
+            f"[dim]Using excluded chromosomes from model metadata: {exclude_chrs}[/dim]"
+        )
+
     ratios: pd.DataFrame = pd.read_csv(infile, sep="\t")
 
     # Preprocess ratios
     preprocessed_ratios = preprocess_ratios(ratios, exclude_chrs=exclude_chrs)
-    
+
     # Convert to float32
     input_data = preprocessed_ratios.values.astype(np.float32)
 
     # Run inference
     # We can rely on position 0, 1 or names.
     # build_ensemble saves: final_ff_score, final_sex_prob
-    
+
     # Get output names
     output_names = [o.name for o in preface_model.get_outputs()]
-    
+
     # Run
-    results = preface_model.run(output_names, {preface_model.get_inputs()[0].name: input_data})
-    
+    results = preface_model.run(
+        output_names, {preface_model.get_inputs()[0].name: input_data}
+    )
+
     # Map results to meaningful variables
     # If standard PREFACE model, names are specific.
     # If unknown model, fallback to index.
-    
+
     ff_score = None
     sex_prob = None
-    
+
     result_map = dict(zip(output_names, results))
-    
+
     if "final_ff_score" in result_map:
         ff_score = result_map["final_ff_score"][0][0]
     elif len(results) > 0:
         ff_score = results[0][0][0]
-        
+
     if "final_sex_prob" in result_map:
         sex_prob = result_map["final_sex_prob"][0][0]
     elif len(results) > 1:
         sex_prob = results[1][0][0]
-        
+
     sex_class = "Male" if sex_prob > 0.5 else "Female"
 
     print("--- Patient Report ---")

@@ -5,7 +5,13 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, roc_curve, auc, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import (
+    mean_absolute_error,
+    roc_curve,
+    auc,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+)
 
 
 COLOR_A: str = "#8DD1C6"
@@ -190,12 +196,12 @@ def plot_classification_performance(
     Plot classification performance (ROC and Confusion Matrix).
     """
     _, axes = plt.subplots(1, 2, figsize=(10, 5))
-    
+
     # ROC Curve
     ax = axes[0]
     fpr, tpr, _ = roc_curve(y_true, y_prob)
     roc_auc = auc(fpr, tpr)
-    
+
     ax.plot(fpr, tpr, color=COLOR_A, lw=2, label=f"ROC curve (area = {roc_auc:.2f})")
     ax.plot([0, 1], [0, 1], color=COLOR_B, lw=2, linestyle="--")
     ax.set_xlim([0.0, 1.0])
@@ -204,15 +210,17 @@ def plot_classification_performance(
     ax.set_ylabel("True Positive Rate")
     ax.set_title("Receiver Operating Characteristic")
     ax.legend(loc="lower right")
-    
+
     # Confusion Matrix
     ax = axes[1]
     y_pred = (y_prob >= 0.5).astype(int)
     cm = confusion_matrix(y_true, y_pred)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Female", "Male"])
+    disp = ConfusionMatrixDisplay(
+        confusion_matrix=cm, display_labels=["Female", "Male"]
+    )
     disp.plot(ax=ax, cmap="Blues", colorbar=False)
     ax.set_title("Confusion Matrix")
-    
+
     plt.tight_layout()
     plt.savefig(path, dpi=300)
     plt.close()

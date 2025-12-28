@@ -9,26 +9,28 @@ from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
 
 
 class ImputeOptions(Enum):
-    ZERO = "zero"      # assume missing values are zero
-    MICE = "mice"      # impute missing values using MICE
-    MEAN = "mean"      # impute missing values by calculating mean
+    ZERO = "zero"  # assume missing values are zero
+    MICE = "mice"  # impute missing values using MICE
+    MEAN = "mean"  # impute missing values by calculating mean
     MEDIAN = "median"  # impute missing values by calculating median
-    KNN = "knn"        # impute missing values using k-nearest neighbors
+    KNN = "knn"  # impute missing values using k-nearest neighbors
 
 
-def impute_nan(values: npt.NDArray, method: ImputeOptions) -> tuple[npt.NDArray, object]:
+def impute_nan(
+    values: npt.NDArray, method: ImputeOptions
+) -> tuple[npt.NDArray, object]:
     """
     Handle NaN values
     Identify the type of missingness (MCAR, MAR, MNAR). Here we assume MAR.
     Here the input log2 ratios indicate relative coverage to a reference,
     we can either impute missing values or assume zero (no change).
-    
+
     Returns:
         tuple: (imputed_values, fitted_imputer)
         Note: For ImputeOptions.ZERO, the fitted_imputer is None (handled manually).
     """
     imputer = None
-    
+
     # Option 1: Impute NaN through MICE (Multiple Imputation by Chained Equations)
     if method == ImputeOptions.MICE:
         # Check sklearn version for compatibility
@@ -49,7 +51,7 @@ def impute_nan(values: npt.NDArray, method: ImputeOptions) -> tuple[npt.NDArray,
         logging.info("Assuming missing values are zero...")
         imputed_values = np.where(np.isnan(values), 0.0, values)
         # For ZERO, we don't have a sklearn imputer, but we can simulate one or handle it in export
-        imputer = None 
+        imputer = None
 
     # Option 3: Impute missing values by calculating mean
     elif method == ImputeOptions.MEAN:
@@ -70,4 +72,3 @@ def impute_nan(values: npt.NDArray, method: ImputeOptions) -> tuple[npt.NDArray,
         imputed_values = imputer.fit_transform(values)
 
     return imputed_values, imputer
-

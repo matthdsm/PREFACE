@@ -90,7 +90,9 @@ def preface_train(
 
     # parse data
     for i, sample in samplesheet_data.iterrows():
-        logging.info(f"Processing sample {sample['ID']} ({i + 1}/{len(samplesheet_data)})...")  # type: ignore
+        logging.info(
+            f"Processing sample {sample['ID']} ({i + 1}/{len(samplesheet_data)})..."  # type: ignore
+        )
         if (
             not Path(sample["filepath"]).exists()
             or not Path(sample["filepath"]).is_file()  # noqa: W503
@@ -234,19 +236,19 @@ def preface_train(
     # Build ensemble model from fold models
     logging.info("Building ensemble model from fold models...")
     build_ensemble(
-        fold_models, 
-        x_all.shape[1], 
+        fold_models,
+        x_all.shape[1],
         out_dir / "PREFACE.onnx",
-        metadata={"exclude_chrs": ",".join(exclude_chrs)}
+        metadata={"exclude_chrs": ",".join(exclude_chrs)},
     )
 
     # Final evaluation on all training data
     logging.info("Evaluating final model on all training data...")
-    
+
     # Load ONNX model
     sess = ort.InferenceSession(out_dir / "PREFACE.onnx")
     input_name = sess.get_inputs()[0].name
-    
+
     # Handle NaNs for evaluation if ZERO strategy was used (since ONNX graph might expect clean input for that case)
     if impute == ImputeOptions.ZERO:
         x_all_eval = np.nan_to_num(x_all, nan=0.0)
@@ -254,10 +256,10 @@ def preface_train(
         x_all_eval = x_all
 
     x_all_eval = x_all_eval.astype(np.float32)
-    
+
     predictions = sess.run(None, {input_name: x_all_eval})
-    y_ff_pred = predictions[0].flatten()
-    
+    y_ff_pred = predictions[0].flatten()  # type: ignore
+
     y_ff_all = y_all[:, 1]
 
     # Use first fold's PCA for visualization

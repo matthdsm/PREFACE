@@ -13,13 +13,21 @@ from tensorflow.keras import (  # pylint: disable=no-name-in-module,import-error
 from preface.lib.impute import ImputeOptions, impute_nan
 
 
-def neural_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, outdir: Path, impute_option: ImputeOptions) -> dict:
+def neural_tune(
+    features: npt.NDArray,
+    targets: npt.NDArray,
+    n_components: int,
+    outdir: Path,
+    impute_option: ImputeOptions,
+) -> dict:
     def objective(trial) -> float:
         params = {
             "n_layers": trial.suggest_int("n_layers", 1, 3),
             "hidden_size": trial.suggest_int("hidden_size", 16, 128, step=16),
             "learning_rate": trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True),
             "dropout_rate": trial.suggest_float("dropout_rate", 0.1, 0.5, step=0.1),
+            "epochs": trial.suggest_int("epochs", 20, 100, step=10),
+            "batch_size": trial.suggest_int("batch_size", 8, 64, step=8),
         }
 
         # Internal split for the tuner
@@ -27,6 +35,9 @@ def neural_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, 
         scores = []
 
         for t_idx, v_idx in kf_internal.split(features):
+            # Clear session to prevent "tf.function retracing" warning
+            keras.backend.clear_session()
+            
             x_train, x_val = features[t_idx], features[v_idx]
             y_train, y_val = targets[t_idx], targets[v_idx]
 
@@ -50,8 +61,8 @@ def neural_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, 
                 x_train,
                 y_train,
                 validation_data=(x_val, y_val),
-                epochs=50,
-                batch_size=16,
+                epochs=params["epochs"],
+                batch_size=params["batch_size"],
                 callbacks=[
                     optuna.integration.TFKerasPruningCallback(trial, "val_loss")
                 ]
@@ -80,7 +91,7 @@ def multi_output_nn(
     input_layer = layers.Input(shape=(input_dim,))
     x = input_layer
     for i in range(n_layers):
-        x = layers.Dense(hidden_size // (2 ** i), activation="relu")(x)
+        x = layers.Dense(hidden_size // (2**i), activation="relu")(x)  # type: ignore
         x = layers.Dropout(dropout_rate)(x)
 
     # Head 1: Regression
@@ -106,6 +117,9 @@ def neural_fit(
     params: dict,
 ) -> tuple[Model, dict]:
     """Build a multi-output neural network for regression and classification."""
+    # Clear session to prevent "tf.function retracing" warning
+    keras.backend.clear_session()
+
     # default parameters
     nn_default_params = {
         "n_layers": 3,
@@ -113,7 +127,8 @@ def neural_fit(
         "learning_rate": 1e-3,
         "dropout_rate": 0.3,
     }
-
+    epochs = params.pop("epochs", 50)
+    batch_size = params.pop("batch_size", 32)
     # Split targets
     # Assume y[:, 0] = class (sex), y[:, 1] = regression (ff)
     # TODO: this is very brittle, make it more robust
@@ -128,7 +143,9 @@ def neural_fit(
     )
 
     # Create model
-    model = multi_output_nn(input_dim=x_train.shape[1], **{**nn_default_params, **params})
+    model = multi_output_nn(
+        input_dim=x_train.shape[1], **{**nn_default_params, **params}
+    )
 
     # Fit model
     model.fit(
@@ -138,9 +155,9 @@ def neural_fit(
             x_test,
             {"reg_output": y_test_reg, "class_output": y_test_class},
         ),
-        epochs=100,
-        batch_size=32,
-        callbacks=[early_stop]
+        epochs=epochs,
+        batch_size=batch_size,
+        callbacks=[early_stop],
     )
 
     # Evaluate

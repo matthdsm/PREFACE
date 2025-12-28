@@ -13,7 +13,13 @@ from sklearn.decomposition import PCA
 from preface.lib.impute import impute_nan, ImputeOptions
 
 
-def xgboost_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, outdir: Path, impute_option: ImputeOptions) -> dict:
+def xgboost_tune(
+    features: npt.NDArray,
+    targets: npt.NDArray,
+    n_components: int,
+    outdir: Path,
+    impute_option: ImputeOptions,
+) -> dict:
     def objective(trial) -> float:
         params = {
             # number of boosting rounds
