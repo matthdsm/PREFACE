@@ -4,7 +4,6 @@ Convert NPZ to Parquet utility.
 
 import logging
 import os
-from typing import List
 
 import numpy as np
 import pandas as pd
@@ -69,7 +68,7 @@ def _convert_single_npz(npz_path: str, output_dir: str) -> None:
 
 
 def npz_to_parquet(
-    npz_files: List[str] = typer.Argument(
+    npz_files: list[str] = typer.Argument(
         ..., help="One or more .npz files to convert."
     ),
     output_dir: str = typer.Option(
