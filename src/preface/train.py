@@ -3,14 +3,14 @@ Training module for PREFACE.
 """
 
 import os
-import time
+# import time
 from pathlib import Path
 import logging
-
 from enum import Enum
 import pandas as pd
 import typer
 import sklearn
+import numpy.typing as npt
 from sklearn.experimental import enable_iterative_imputer  # pylint: disable=unused-import # noqa: F401  # type: ignore
 from sklearn.impute import IterativeImputer
 from sklearn.decomposition import PCA
@@ -19,13 +19,13 @@ from sklearn.model_selection import KFold
 from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
 
 from preface.lib.functions import (
-    build_ensemble,
     plot_regression_performance,
     plot_classification_performance,
     preprocess_ratios,
 )
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
 from preface.lib.neural import neural_tune, neural_fit
+# from preface.lib.ensemble import build_ensemble
 
 # Constants
 EXCLUDE_CHRS: list[str] = ["13", "18", "21", "X", "Y"]
@@ -73,7 +73,7 @@ def preface_train(
     """
     Train and optionally tune the PREFACE model.
     """
-    start_time: float = time.time()
+    # start_time: float = time.time()
 
     # Load samplesheet
     samplesheet_data: pd.DataFrame = pd.read_csv(
@@ -154,9 +154,12 @@ def preface_train(
 
         logging.info("Imputing missing values using MICE... This might take a while.")
         imputer = IterativeImputer(
-            random_state=42, max_iter=10, initial_strategy="mean", verbose=1
+            random_state=42, max_iter=10, initial_strategy="mean", verbose=2
         )
+        logging.info("Fitting imputer to data...")
         training_df_array = imputer.fit_transform(ratios_per_sample)
+        logging.info(f"Imputation completed. Sample of imputed data:\n{training_df_array[:10]}")
+
         ratios_per_sample = pd.DataFrame(
             training_df_array,
             index=ratios_per_sample.index,
@@ -168,26 +171,26 @@ def preface_train(
         ratios_per_sample = ratios_per_sample.fillna(0.0)
 
     # Split into features and labels
-    x_all: pd.DataFrame = ratios_per_sample.drop(columns=["sex", "ff"])
-    y_all: pd.DataFrame = ratios_per_sample[["sex", "ff"]]
+    x_all: npt.NDArray = ratios_per_sample.drop(columns=["sex", "ff"]).to_numpy()
+    y_all: npt.NDArray = ratios_per_sample[["sex", "ff"]].to_numpy()
     # labels for regression (fetal fraction)
-    y_ff_all = y_all["ff"]
+    y_ff_all = y_all[:, 1]
     # labels for classification (sex)
-    y_sex_all = y_all["sex"]
+    y_sex_all = y_all[:, 0]
 
-    # Reduce dimensionality with PCA
-    logging.info("Calculating Principal Components")
+    # Global PCA fit on all data for later use in ensemble model
+    logging.info("Fitting global PCA...")
     global_pca = PCA(n_components=n_feat)
-    x_all_pca = global_pca.fit_transform(x_all)
+    global_pca.fit(x_all)
 
     params = {}
     if tune:
         # Enable hyperparameter tuning
         logging.info("Tuning hyperparameters...")
         if model == ModelOptions.NEURAL:
-            params = neural_tune(x_all_pca, y_all.to_numpy(), out_dir)
+            params = neural_tune(x_all, y_all, n_feat, out_dir)
         elif model == ModelOptions.XGBOOST:
-            params = xgboost_tune(x_all_pca, y_all.to_numpy(), out_dir)
+            params = xgboost_tune(x_all, y_all, n_feat, out_dir)
 
     # Set up training (k-fold cross-validation)
     # Create directory to store fold metrics
@@ -197,12 +200,15 @@ def preface_train(
 
     # Set up k-fold cross-validation
     kf: KFold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-    for fold, (train_idx, test_idx) in enumerate(kf.split(x_all_pca), 1):
+    for fold, (train_idx, test_idx) in enumerate(kf.split(x_all), 1):
         logging.info(f"Processing Fold {fold}/{n_folds}...")
 
         # split into train and test sets
-        x_train, x_test = x_all_pca[train_idx], x_all_pca[test_idx]
-        y_train, y_test = y_all.iloc[train_idx], y_all.iloc[test_idx]
+        # reduce dimensionality with PCA for each fold to prevent data leakage
+        training_pca = PCA(n_components=n_feat)
+        x_train_pca = training_pca.fit_transform(x_all[train_idx])
+        x_test_pca = training_pca.transform(x_all[test_idx])
+        y_train, y_test = y_all[train_idx], y_all[test_idx]
         y_train_reg, y_test_reg = y_ff_all[train_idx], y_ff_all[test_idx]
         y_train_class, y_test_class = y_sex_all[train_idx], y_sex_all[test_idx]
 
@@ -210,13 +216,12 @@ def preface_train(
         logging.info(f"Training fold {fold}...")
         if model == ModelOptions.NEURAL:
             model, predictions = neural_fit(
-                x_train,
-                x_test,
-                y_train_reg.to_numpy(),
-                y_train_class.to_numpy(),
-                y_test_reg.to_numpy(),
-                y_test_class.to_numpy(),
-                n_feat,
+                x_train_pca,
+                x_test_pca,
+                y_train_reg,
+                y_train_class,
+                y_test_reg,
+                y_test_class,
                 params,
             )
             # Save fold model
@@ -224,16 +229,17 @@ def preface_train(
 
         elif model == ModelOptions.XGBOOST:
             model, predictions = xgboost_fit(
-                x_train, x_test, y_train.to_numpy(), y_test.to_numpy(), params
+                x_train_pca, x_test_pca, y_train, y_test, params
             )
+            model.save_model(out_dir / "training_folds" / f"fold_{fold}.bin")  # type: ignore
 
         fold_models.append(model)
 
         # Plot regression performance
         reg_perf = plot_regression_performance(
             predictions["regression_predictions"],
-            y_test_reg.to_numpy(),
-            global_pca.explained_variance_ratio_,
+            y_test_reg,
+            training_pca.explained_variance_ratio_,
             n_feat,
             "PREFACE (%)",
             "FF (%)",
@@ -264,32 +270,31 @@ def preface_train(
     fold_metrics_df = pd.DataFrame(fold_metrics)
     fold_metrics_df.to_csv(out_dir / "training_fold_metrics.csv", index=False)
 
-    # Build ensemble model from fold models
-    logging.info("Building ensemble model from fold models...")
-    ensemble_model = build_ensemble(len(x_all.columns), global_pca, fold_models)
-    ensemble_model.save(out_dir / "PREFACE")
+    # # Build ensemble model from fold models
+    # logging.info("Building ensemble model from fold models...")
+    # ensemble_model = build_ensemble(global_pca, fold_models, x_all.shape[1], out_dir / "PREFACE.onnx")
 
-    # Final evaluation on all training data
-    logging.info("Evaluating final model on all training data...")
-    predictions = ensemble_model.predict(x_all)
-    info_overall = plot_regression_performance(
-        predictions[0].flatten(),
-        y_ff_all.to_numpy(),
-        global_pca.explained_variance_ratio_,
-        n_feat,
-        "PREFACE (%)",
-        "FF (%)",
-        out_dir / "overall_performance.png",
-    )
+    # # Final evaluation on all training data
+    # logging.info("Evaluating final model on all training data...")
+    # predictions = ensemble_model.run()
+    # info_overall = plot_regression_performance(
+    #     predictions[0][0][0].flatten(),
+    #     y_ff_all,
+    #     global_pca.explained_variance_ratio_,
+    #     n_feat,
+    #     "PREFACE (%)",
+    #     "FF (%)",
+    #     out_dir / "overall_performance.png",
+    # )
 
-    with open(out_dir / "training_statistics.txt", "w", encoding="utf-8") as f:
-        f.write(
-            f"""PREFACE - PREdict FetAl ComponEnt
-            Training time: {time.time() - start_time:.0f} seconds
-            Overall correlation (r): {info_overall["correlation"]:.4f}
-            Overall mean absolute error (MAE): {info_overall["mae"]:.4f} ± {info_overall["sd_diff"]:.4f}
-            """
-        )
+    # with open(out_dir / "training_statistics.txt", "w", encoding="utf-8") as f:
+    #     f.write(
+    #         f"""PREFACE - PREdict FetAl ComponEnt
+    #         Training time: {time.time() - start_time:.0f} seconds
+    #         Overall correlation (r): {info_overall["correlation"]:.4f}
+    #         Overall mean absolute error (MAE): {info_overall["mae"]:.4f} ± {info_overall["sd_diff"]:.4f}
+    #         """
+    #     )
 
     logging.info(
         f"Finished! Consult '{out_dir / 'training_statistics.txt'}' "

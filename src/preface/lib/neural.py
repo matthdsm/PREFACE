@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 import optuna
+from sklearn.decomposition import PCA
 from sklearn.model_selection import KFold
 from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
 from tensorflow.keras import (  # pylint: disable=no-name-in-module,import-error # type: ignore
@@ -11,7 +12,7 @@ from tensorflow.keras import (  # pylint: disable=no-name-in-module,import-error
 )
 
 
-def neural_tune(features: npt.NDArray, targets: npt.NDArray, outdir: Path) -> dict:
+def neural_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, outdir: Path) -> dict:
     def objective(trial) -> float:
         params = {
             "n_layers": trial.suggest_int("n_layers", 1, 3),
@@ -25,8 +26,12 @@ def neural_tune(features: npt.NDArray, targets: npt.NDArray, outdir: Path) -> di
         scores = []
 
         for t_idx, v_idx in kf_internal.split(features):
+            # reduce dimensionality with PCA
+            pca = PCA(n_components=n_components)
+            features_pca = pca.fit_transform(features)
+
             model = multi_output_nn(
-                input_dim=features.shape[1],
+                input_dim=features_pca.shape[1],
                 n_layers=params["n_layers"],
                 hidden_size=params["hidden_size"],
                 learning_rate=params["learning_rate"],

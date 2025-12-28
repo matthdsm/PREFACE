@@ -4,22 +4,23 @@ Predict module for PREFACE.
 
 import pandas as pd
 import typer
-from tensorflow.keras.saving import load_model  # pylint: disable=no-name-in-module,import-error # type: ignore
 from preface.lib.functions import preprocess_ratios
 from rich import print
+from pathlib import Path
+import onnxruntime as ort
 
 
 def preface_predict(
-    infile: str = typer.Option(..., "--infile", help="Path to input BED file"),
-    model_path: str = typer.Option(..., "--model", help="Path to model"),
+    infile: Path = typer.Option(..., "--infile", help="Path to input BED file"),
+    model_path: Path = typer.Option(..., "--model", help="Path to model"),
 ) -> None:
     """
     Predict using model.
     """
 
     # Load model
-    preface_model = load_model(model_path)
-    ratios = pd.read_csv(infile, sep="\t")
+    preface_model: ort.InferenceSession = ort.InferenceSession(model_path)
+    ratios: pd.DataFrame = pd.read_csv(infile, sep="\t")
 
     # Preprocess ratios
     preprocessed_ratios = preprocess_ratios(ratios, exclude_chrs=[])
@@ -31,9 +32,14 @@ def preface_predict(
     # else:
     #     x_ratio = float(np.nan)
 
-    ff_pred, sex_pred = preface_model.predict(preprocessed_ratios.values)
-    print(f"FF = {ff_pred:.4g}%")
-    print(f"Sex = {sex_pred}")
+    results = preface_model.run(None, {preface_model.get_inputs()[0].name: preprocessed_ratios.values})
+    ff_score = results[0][0][0]  # type: ignore
+    sex_prob = results[1][0][0]  # type: ignore
+    sex_class = "Male" if sex_prob > 0.5 else "Female"
+
+    print("--- Patient Report ---")
+    print(f"Predicted FF Score: {ff_score:.4f}")
+    print(f"Sex Probability:    {sex_prob:.4f} ({sex_class})")
 
     # ffx: float = (x_ratio - intercept_x) / slope_x
 

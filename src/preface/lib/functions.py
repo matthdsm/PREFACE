@@ -4,14 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-import tensorflow as tf
-from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error
-from tensorflow.keras import (  # pylint: disable=no-name-in-module,import-error # type: ignore
-    Model,
-    layers,
-)
+
 
 COLOR_A: str = "#8DD1C6"
 COLOR_B: str = "#E3C88A"
@@ -36,56 +31,6 @@ def preprocess_ratios(ratios_df: pd.DataFrame, exclude_chrs: list[str]) -> pd.Da
     ratios_df = ratios_df.set_index("region").T
 
     return ratios_df
-
-
-def build_ensemble(n_feat: int, pca: PCA, models: list[Model]) -> Model:
-    """
-    Build an ensemble model that averages predictions from multiple fold models.
-    Each fold model is assumed to have two outputs: regression and classification.
-    """
-
-    # Add input layer
-    ensemble_input = layers.Input(shape=(n_feat,), name="input")
-
-    # Add PCA layer
-    class PCALayer(layers.Layer):
-        def __init__(self, pca, **kwargs):
-            super(
-                PCALayer,
-                self,
-            ).__init__(**kwargs)
-            # Convert Scikit-Learn attributes to TensorFlow constants
-            self.components = tf.constant(pca.components_.T, dtype=tf.float32)
-
-        def call(self, inputs):
-            # PCA: Matrix multiplication with components
-            pca_data = tf.matmul(inputs, self.components)
-            return pca_data
-
-    pca_feat = PCALayer(pca, name="pca")(ensemble_input)
-
-    # Add each fold model as a sub-network
-    reg_outputs = []
-    class_outputs = []
-
-    for i, fold_model in enumerate(models):
-        fold_model.name = f"fold_model_{i}"  # Ensure unique names
-
-        # Pass the PCA features through the fold model
-        reg_out, class_out = fold_model(pca_feat)
-        reg_outputs.append(reg_out)
-        class_outputs.append(class_out)
-
-    # Average regression outputs
-    avg_reg_output = layers.Average(name="ff_pred")(reg_outputs)
-    avg_class_output = layers.Average(name="sex_pred")(class_outputs)
-
-    # Build and return ensemble model
-    return Model(
-        inputs=ensemble_input,
-        outputs=[avg_reg_output, avg_class_output],
-        name="PREFACE_model",
-    )
 
 
 def plot_regression_performance(

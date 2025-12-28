@@ -8,9 +8,10 @@ from tensorflow.keras import (  # type: ignore # pylint: disable=no-name-in-modu
     Model,
 )
 from xgboost import XGBRegressor
+from sklearn.decomposition import PCA
 
 
-def xgboost_tune(features: npt.NDArray, targets: npt.NDArray, outdir: Path) -> dict:
+def xgboost_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, outdir: Path) -> dict:
     def objective(trial) -> float:
         params = {
             # number of boosting rounds
@@ -32,9 +33,14 @@ def xgboost_tune(features: npt.NDArray, targets: npt.NDArray, outdir: Path) -> d
         scores = []
 
         for t_idx, v_idx in kf_internal.split(features):
+            # Reduce dimensionality with PCA
+            pca = PCA(n_components=n_components)
+            features_pca = pca.fit_transform(features)
+
+            # Train and evaluate model
             model = XGBRegressor(**params)
-            model.fit(features[t_idx], targets[t_idx])
-            preds = model.predict(features[v_idx])
+            model.fit(features_pca[t_idx], targets[t_idx])
+            preds = model.predict(features_pca[v_idx])
             scores.append(mean_squared_error(targets[v_idx], preds))
         return np.mean(scores).astype(float)
 
