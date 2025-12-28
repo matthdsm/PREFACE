@@ -41,9 +41,8 @@ def xgboost_tune(features: npt.NDArray, targets: npt.NDArray, outdir: Path) -> d
     study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=30)
 
-    optuna.visualization.plot_optimization_history(study).savefig(
-        outdir / "xgboost_tuning_history.png"
-    )
+    fig = optuna.visualization.plot_optimization_history(study)
+    fig.write_image(outdir / "xgboost_tuning_history.png")
     return study.best_params
 
 
@@ -70,9 +69,10 @@ def xgboost_fit(
     model = XGBRegressor(
         **{**xgb_default_params, **params}  # Merge default and tuned parameters
     )
+    model._estimator_type = "regressor"  # type: ignore
 
     # Fit model
-    model.fit(x_train, y_train, eval_set=[(x_test, y_test)], verbose=False)
+    model.fit(x_train, y_train, eval_set=[(x_test, y_test)])
 
     # Evaluate
     preds = model.predict(x_test)

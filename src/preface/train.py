@@ -123,7 +123,7 @@ def preface_train(
 
         # add sample metadata columns to transposed ratios
         masked_ratios["id"] = sample["ID"]
-        masked_ratios["sex"] = sample["sex"].map({"M": 1, "F": 0})
+        masked_ratios["sex"] = 1 if sample["sex"] == "M" else 0
         masked_ratios["ff"] = sample["FF"]
 
         # add to list
@@ -176,6 +176,7 @@ def preface_train(
     y_sex_all = y_all["sex"]
 
     # Reduce dimensionality with PCA
+    logging.info("Calculating Principal Components")
     global_pca = PCA(n_components=n_feat)
     x_all_pca = global_pca.fit_transform(x_all)
 
@@ -218,13 +219,14 @@ def preface_train(
                 n_feat,
                 params,
             )
+            # Save fold model
+            model.save(out_dir / "training_folds" / f"fold_{fold}.keras")  # type: ignore
+
         elif model == ModelOptions.XGBOOST:
             model, predictions = xgboost_fit(
                 x_train, x_test, y_train.to_numpy(), y_test.to_numpy(), params
             )
 
-        # Save fold model
-        model.save(out_dir / "training_folds" / f"fold_{fold}.keras")  # type: ignore
         fold_models.append(model)
 
         # Plot regression performance

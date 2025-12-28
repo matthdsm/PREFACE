@@ -15,7 +15,7 @@ def neural_tune(features: npt.NDArray, targets: npt.NDArray, outdir: Path) -> di
     def objective(trial) -> float:
         params = {
             "n_layers": trial.suggest_int("n_layers", 1, 3),
-            "hidden_size": trial.suggest_int("hidden_size", 16, 128, step=32),
+            "hidden_size": trial.suggest_int("hidden_size", 16, 128, step=16),
             "learning_rate": trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True),
             "dropout_rate": trial.suggest_float("dropout_rate", 0.1, 0.5, step=0.1),
         }
@@ -41,6 +41,7 @@ def neural_tune(features: npt.NDArray, targets: npt.NDArray, outdir: Path) -> di
                 callbacks=[
                     optuna.integration.TFKerasPruningCallback(trial, "val_loss")
                 ],
+                verbose=True
             )
             scores.append(min((history.history["val_loss"])))
 
@@ -51,9 +52,8 @@ def neural_tune(features: npt.NDArray, targets: npt.NDArray, outdir: Path) -> di
     )
     study.optimize(objective, n_trials=30)
 
-    optuna.visualization.plot_optimization_history(study).savefig(
-        outdir / "neural_tuning_history.png"
-    )
+    fig = optuna.visualization.plot_optimization_history(study)
+    fig.write_image(outdir / "neural_tuning_history.png")
     return study.best_params
 
 
@@ -65,8 +65,8 @@ def multi_output_nn(
     dropout_rate: float,
 ) -> Model:
     x = layers.Input(shape=(input_dim,))
-    for _ in range(n_layers):
-        x = layers.Dense(hidden_size, activation="relu")(x)
+    for i in range(n_layers):
+        x = layers.Dense(hidden_size // (2 ** i), activation="relu")(x)
         x = layers.Dropout(dropout_rate)(x)
 
     # Head 1: Regression
@@ -91,7 +91,6 @@ def neural_fit(
     y_train_class: npt.NDArray,
     y_test_reg: npt.NDArray,
     y_test_class: npt.NDArray,
-    input_dim: int,
     params: dict,
 ) -> tuple[Model, dict]:
     """Build a multi-output neural network for regression and classification."""
@@ -109,7 +108,7 @@ def neural_fit(
     )
 
     # Create model
-    model = multi_output_nn(input_dim=input_dim, **{**nn_default_params, **params})
+    model = multi_output_nn(input_dim=x_train.shape[1], **{**nn_default_params, **params})
 
     # Fit model
     model.fit(
@@ -121,7 +120,7 @@ def neural_fit(
         ),
         epochs=100,
         batch_size=32,
-        verbose=1,
+        verbose=True,
         callbacks=[early_stop],
     )
 
