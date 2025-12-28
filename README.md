@@ -32,13 +32,18 @@ For training, PREFACE requires a samplesheet file.
 
 ## Installation & Setup
 
-PREFACE is a Python package that can be installed using `pip`.
+PREFACE can be installed using `pip`:
 
 ```bash
 pip install .
 ```
 
-This will install the `PREFACE` command-line tool.
+Alternatively, for a reproducible environment using [pixi](https://pixi.sh):
+
+```bash
+pixi install
+pixi run PREFACE --help
+```
 
 ## Model training
 
@@ -46,28 +51,43 @@ This will install the `PREFACE` command-line tool.
 PREFACE train --samplesheet path/to/samplesheet.tsv [optional arguments]
 ```
 
-| Optional argument | Function |
-| :--- | :--- |
-| `--impute` | Impute missing values instead of assuming zero. |
-| `--exclude-chrs` | Chromosomes to exclude from training (default: 13, 18, 21, X, Y). |
-| `--nfolds x` | Number of folds for cross-validation (default: 5). |
-| `--nfeat x` | Number of features (PCA components) (default: 50). |
-| `--tune` | Enable automatic hyperparameter tuning. |
-| `--model [neural\|xgboost]` | Type of model to train (default: neural). |
+### Options
+
+| Argument | Type | Default | Function |
+| :--- | :--- | :--- | :--- |
+| `--samplesheet` | PATH | (Required) | Path to the samplesheet TSV file. |
+| `--outdir` | PATH | `.` | Output directory for models and plots. |
+| `--impute` | [zero\|mice\|mean\|median\|knn] | `zero` | Strategy to handle missing values (NaNs). |
+| `--exclude-chrs` | TEXT | `13,18,21,X,Y` | Chromosomes to exclude from training features. |
+| `--nfolds` | INTEGER | `5` | Number of folds for cross-validation. |
+| `--nfeat` | INTEGER | `50` | Number of features (PCA components) to use. |
+| `--tune` | BOOLEAN | `False` | Enable automatic hyperparameter tuning (via Optuna). |
+| `--model` | [neural\|xgboost] | `neural` | Type of model architecture to train. |
 
 ## Predicting
 
 ```bash
-PREFACE predict --infile path/to/infile.bed --model path/to/model_directory
+PREFACE predict --infile path/to/infile.bed --model path/to/PREFACE.onnx
 ```
 
-| Argument | Function |
-| :--- | :--- |
-| `--infile` | Path to input BED file. |
-| `--model` | Path to the trained model directory. |
+### Options
 
-## Model optimization  
+| Argument | Type | Default | Function |
+| :--- | :--- | :--- | :--- |
+| `--infile` | PATH | (Required) | Path to input BED file for prediction. |
+| `--model` | PATH | (Required) | Path to the trained `.onnx` model file. |
 
+The prediction output includes both the predicted fetal fraction score and the fetal sex probability.
+
+## Version
+
+To check the installed version of PREFACE:
+
+```bash
+PREFACE version
+```
+
+## Model optimization
 - The most important parameter is `--nfeat`:  
     - It represents the number of principal components (PCs) that will be used as features during model training. Depending on the used copy number alteration software, bin size and the number of training samples, it might have different optimal values. In general, I recommend to train a model using the default parameters. The output will contain a plot that enables you to review the selected `--nfeat`. Two parts should be seen in the proportion of variance across the principal components (indexed in order of importance):  
         - A 'random' phase (representing PCs that explain variance caused by, inter alia, fetal fraction).  
@@ -80,7 +100,7 @@ PREFACE predict --infile path/to/infile.bed --model path/to/model_directory
 
 ## NPZ to Parquet Converter
 
-This script converts NumPy `.npz` files into one or more Parquet files, facilitating easier exploration and analysis of the stored numerical data using tools like Pandas.
+Converts NumPy `.npz` files into one or more Parquet files, facilitating easier exploration and analysis using tools like Pandas.
 
 ### Usage
 
@@ -88,12 +108,14 @@ This script converts NumPy `.npz` files into one or more Parquet files, facilita
 PREFACE utils npz-to-parquet <npz_file1> [<npz_file2> ...] [-o <output_directory>]
 ```
 
-- `<npz_file1> [<npz_file2> ...]`: One or more paths to the input `.npz` files.
-- `-o, --output-dir`: (Optional) Directory to save the output Parquet files. Defaults to the current directory (`.`).
+| Argument | Type | Default | Function |
+| :--- | :--- | :--- | :--- |
+| `npz_files` | ARGUMENT(S) | (Required) | One or more .npz files to convert. |
+| `--output-dir` | PATH | `.` | Directory to save the output Parquet files. |
 
 ## FFY Calculator
 
-Calculates Fetal Fraction from Y-chromosome reads (from WisecondorX NPZ output).
+Calculates Fetal Fraction from Y-chromosome reads (FFY) directly from WisecondorX output files.
 
 ### Usage
 
@@ -101,5 +123,7 @@ Calculates Fetal Fraction from Y-chromosome reads (from WisecondorX NPZ output).
 PREFACE utils ffy <wisecondorx_npz> [--sex-cutoff <cutoff>]
 ```
 
-- `<wisecondorx_npz>`: Path to WisecondorX output NPZ file.
-- `--sex-cutoff`: (Optional) Cutoff for sex determination (default: 0.2).
+| Argument | Type | Default | Function |
+| :--- | :--- | :--- | :--- |
+| `wisecondorx_npz`| ARGUMENT | (Required) | Path to WisecondorX output NPZ file. |
+| `--sex-cutoff` | FLOAT | `0.2` | Cutoff for sex determination. |

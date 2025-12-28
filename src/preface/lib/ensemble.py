@@ -94,8 +94,8 @@ def build_ensemble(
         if current_model:
             # Merge Imputer + PCA
             current_model = merge_models(
-                current_model,
-                pca_onnx,
+                current_model,  # type: ignore
+                pca_onnx,  # type: ignore
                 io_map=[(imp_out_name, pca_in_name)],  # type: ignore
             )
             # Update output name
@@ -114,15 +114,12 @@ def build_ensemble(
         model_type = "nn" if isinstance(model, Model) else "xgb"
 
         if model_type == "nn":
-            # tf2onnx / onnxmltools
-            # We explicitly provide input signature to avoid "ValueError: from_keras requires input_signature"
             spec = (tf.TensorSpec((None, n_comps), tf.float32, name="input_model"),)  # type: ignore
             m_onnx, _ = tf2onnx.convert.from_keras(
                 model, input_signature=spec, opset=12
             )
             m_onnx.graph.name = f"fold_{i}_model"
-        else:
-            # XGBoost
+        elif model_type == "xgb":
             m_onnx = onnxmltools.convert_xgboost(
                 model,
                 initial_types=[("input_model", FloatTensorType([None, n_comps]))],
@@ -133,7 +130,7 @@ def build_ensemble(
 
         # Merge (Imputer+PCA) + Model
         current_model = merge_models(
-            current_model,
+            current_model,  # type: ignore
             m_onnx,
             io_map=[(current_out_name, m_in_name)],  # type: ignore
         )
