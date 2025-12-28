@@ -2389,7 +2389,7 @@ packages:
 - pypi: ./
   name: preface
   version: 1.0.0.dev0
-  sha256: e5ff08eeff805ec836b603be3c4da0890fbaf8fba8e660de5d0e3b28eb217abe
+  sha256: e632e6e4efa31c951cd37a74b4b3f7d908e7094a73f2fa4658dde0dddf336846
   requires_dist:
   - pandas>=2.3.3,<3
   - numpy>=2.3.5,<3
@@ -2409,7 +2409,7 @@ packages:
   - skl2onnx>=1.19.1,<2
   - onnxconverter-common>=1.16.0,<2
   - onnxruntime>=1.23.2,<2
-  - tf2onnx
+  - tf2onnx>=1.8.4,<2
   requires_python: '>=3.11,<3.14'
 - pypi: https://files.pythonhosted.org/packages/56/13/333b8f421738f149d4fe5e49553bc2a2ab75235486259f689b4b91f96cec/protobuf-6.33.2-cp39-abi3-manylinux2014_x86_64.whl
   name: protobuf

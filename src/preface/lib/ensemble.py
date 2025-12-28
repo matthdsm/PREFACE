@@ -2,6 +2,8 @@ from pathlib import Path
 
 import onnx
 import onnxmltools
+import tensorflow as tf
+import tf2onnx
 from onnx import TensorProto, helper
 from onnx.compose import add_prefix, merge_models
 from skl2onnx import convert_sklearn
@@ -97,8 +99,10 @@ def build_ensemble(
         
         if model_type == "nn":
             # tf2onnx / onnxmltools
-            # Keras conversion doesn't need initial_types usually, it reads from model
-            m_onnx = onnxmltools.convert_keras(model, name=f"fold_{i}_model", target_opset=12)
+            # We explicitly provide input signature to avoid "ValueError: from_keras requires input_signature"
+            spec = (tf.TensorSpec((None, n_comps), tf.float32, name="input_model"),)
+            m_onnx, _ = tf2onnx.convert.from_keras(model, input_signature=spec, opset=12)
+            m_onnx.graph.name = f"fold_{i}_model"
         else:
             # XGBoost
             m_onnx = onnxmltools.convert_xgboost(
