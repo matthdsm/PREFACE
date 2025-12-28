@@ -10,8 +10,10 @@ from tensorflow.keras import (  # type: ignore # pylint: disable=no-name-in-modu
 from xgboost import XGBRegressor
 from sklearn.decomposition import PCA
 
+from preface.lib.impute import impute_nan, ImputeOptions
 
-def xgboost_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, outdir: Path) -> dict:
+
+def xgboost_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, outdir: Path, impute_option: ImputeOptions) -> dict:
     def objective(trial) -> float:
         params = {
             # number of boosting rounds
@@ -33,15 +35,23 @@ def xgboost_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int,
         scores = []
 
         for t_idx, v_idx in kf_internal.split(features):
+            x_train, x_val = features[t_idx], features[v_idx]
+            y_train, y_val = targets[t_idx], targets[v_idx]
+
+            # impute missing values
+            x_train = impute_nan(x_train, impute_option)
+            x_val = impute_nan(x_val, impute_option)
+
             # Reduce dimensionality with PCA
             pca = PCA(n_components=n_components)
-            features_pca = pca.fit_transform(features)
+            x_train = pca.fit_transform(x_train)
+            x_val = pca.transform(x_val)
 
             # Train and evaluate model
             model = XGBRegressor(**params)
-            model.fit(features_pca[t_idx], targets[t_idx])
-            preds = model.predict(features_pca[v_idx])
-            scores.append(mean_squared_error(targets[v_idx], preds))
+            model.fit(x_train, y_train)
+            preds = model.predict(x_val)
+            scores.append(mean_squared_error(y_val, preds))
         return np.mean(scores).astype(float)
 
     study = optuna.create_study(direction="minimize")

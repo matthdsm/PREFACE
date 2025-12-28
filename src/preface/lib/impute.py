@@ -38,7 +38,6 @@ def impute_nan(values: npt.NDArray, method: ImputeOptions) -> npt.NDArray:
         )
         imputed_values = imputer.fit_transform(values)
 
-
     # Option 2: Assume missing values are zero (no change)
     elif method == ImputeOptions.ZERO:
         logging.info("Assuming missing values are zero...")

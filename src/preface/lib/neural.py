@@ -10,9 +10,10 @@ from tensorflow.keras import (  # pylint: disable=no-name-in-module,import-error
     Model,
     layers,
 )
+from preface.lib.impute import ImputeOptions, impute_nan
 
 
-def neural_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, outdir: Path) -> dict:
+def neural_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, outdir: Path, impute_option: ImputeOptions) -> dict:
     def objective(trial) -> float:
         params = {
             "n_layers": trial.suggest_int("n_layers", 1, 3),
@@ -26,27 +27,34 @@ def neural_tune(features: npt.NDArray, targets: npt.NDArray, n_components: int, 
         scores = []
 
         for t_idx, v_idx in kf_internal.split(features):
+            x_train, x_val = features[t_idx], features[v_idx]
+            y_train, y_val = targets[t_idx], targets[v_idx]
+
+            # impute missing values
+            x_train = impute_nan(x_train, impute_option)
+            x_val = impute_nan(x_val, impute_option)
+
             # reduce dimensionality with PCA
             pca = PCA(n_components=n_components)
-            features_pca = pca.fit_transform(features)
+            x_train = pca.fit_transform(x_train)
+            x_val = pca.transform(x_val)
 
             model = multi_output_nn(
-                input_dim=features_pca.shape[1],
+                input_dim=x_train.shape[1],
                 n_layers=params["n_layers"],
                 hidden_size=params["hidden_size"],
                 learning_rate=params["learning_rate"],
                 dropout_rate=params["dropout_rate"],
             )
             history = model.fit(
-                features[t_idx],
-                targets[t_idx],
-                validation_data=(features[v_idx], targets[v_idx]),
+                x_train,
+                y_train,
+                validation_data=(x_val, y_val),
                 epochs=50,
                 batch_size=16,
                 callbacks=[
                     optuna.integration.TFKerasPruningCallback(trial, "val_loss")
-                ],
-                verbose=True
+                ]
             )
             scores.append(min((history.history["val_loss"])))
 
@@ -131,8 +139,7 @@ def neural_fit(
         ),
         epochs=100,
         batch_size=32,
-        verbose=True,
-        callbacks=[early_stop],
+        callbacks=[early_stop]
     )
 
     # Evaluate

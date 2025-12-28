@@ -139,10 +139,8 @@ def preface_train(
     if tune:
         # Enable hyperparameter tuning
         logging.info("Tuning hyperparameters...")
-        if model == ModelOptions.NEURAL:
-            train_params = neural_tune(x_all, y_all, n_feat, out_dir)
-        elif model == ModelOptions.XGBOOST:
-            train_params = xgboost_tune(x_all, y_all, n_feat, out_dir)
+        tuner = neural_tune if model == ModelOptions.NEURAL else xgboost_tune
+        train_params = tuner(x_all, y_all, n_feat, out_dir, impute)
 
     # Set up training (k-fold cross-validation)
     # Create directory to store fold metrics
