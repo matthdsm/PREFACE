@@ -1,7 +1,6 @@
 import logging
 from enum import Enum
 
-import numpy as np
 import numpy.typing as npt
 import sklearn
 from sklearn.experimental import enable_iterative_imputer  # pylint: disable=unused-import # noqa: F401  # type: ignore
@@ -16,9 +15,15 @@ class ImputeOptions(Enum):
     KNN = "knn"  # impute missing values using k-nearest neighbors
 
 
+class ZeroImputer(SimpleImputer):
+    def fit(self, X, y=None):
+        self.fill_value = 0.0
+        return super().fit(X, y)
+
+
 def impute_nan(
     values: npt.NDArray, method: ImputeOptions
-) -> tuple[npt.NDArray, object]:
+) -> tuple[npt.NDArray, IterativeImputer | SimpleImputer | KNNImputer | ZeroImputer]:
     """
     Handle NaN values
     Identify the type of missingness (MCAR, MAR, MNAR). Here we assume MAR.
@@ -49,9 +54,8 @@ def impute_nan(
     # Option 2: Assume missing values are zero (no change)
     elif method == ImputeOptions.ZERO:
         logging.info("Assuming missing values are zero...")
-        imputed_values = np.where(np.isnan(values), 0.0, values)
-        # For ZERO, we don't have a sklearn imputer, but we can simulate one or handle it in export
-        imputer = None
+        imputer = ZeroImputer()
+        imputed_values = imputer.fit_transform(values)
 
     # Option 3: Impute missing values by calculating mean
     elif method == ImputeOptions.MEAN:
