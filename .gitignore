@@ -6,6 +6,8 @@ data/
 __pycache__/
 .gemini/
 *.ipynb
+.vscode/
+.ruff_cache/
 # pixi environments
 .pixi/*
 !.pixi/config.toml

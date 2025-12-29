@@ -2,9 +2,12 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import statsmodels.api as sm
+from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
+from sklearn.manifold import TSNE
 from sklearn.metrics import (
     mean_absolute_error,
     roc_curve,
@@ -245,7 +248,7 @@ def plot_ffx(
     y_values: np.ndarray,
     intercept: float,
     slope: float,
-    out_dir_path: Path,
+    output: Path,
 ):
     """
     Plot RLM fit results.
@@ -287,5 +290,95 @@ def plot_ffx(
         linewidth=3,
     )
     plt.tight_layout()
-    plt.savefig(out_dir_path / "FFX.png", dpi=300)
+    plt.savefig(output, dpi=300)
+    plt.close()
+
+
+def plot_pca(
+    pca: PCA,
+    principal_components: npt.NDArray,
+    output: Path,
+    labels: list | None = None,
+    title: str = "PCA Plot",
+) -> None:
+    """
+    Generate and save a PCA plot.
+    """
+
+    plt.figure(figsize=(8, 6))
+    if labels is not None:
+        labels = np.asarray(labels)
+        unique_labels = np.unique(labels)
+        for label in unique_labels:
+            indices = np.where(labels == label)
+            plt.scatter(
+                principal_components[indices, 0],
+                principal_components[indices, 1],
+                label=str(label),
+                alpha=0.7,
+            )
+        plt.legend()
+    else:
+        plt.scatter(
+            principal_components[:, 0],
+            principal_components[:, 1],
+            color=COLOR_A,
+            alpha=0.7,
+        )
+
+    plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)")
+    plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output, dpi=300)
+    plt.close()
+
+
+def plot_tsne(
+    data: np.ndarray | pd.DataFrame,
+    output: Path,
+    labels: list | None = None,
+    perplexity: float = 30.0,
+    title: str = "t-SNE Plot",
+) -> None:
+    """
+    Generate and save a t-SNE plot.
+    """
+    # t-SNE requires fewer samples than perplexity usually, handled by sklearn but good to know.
+    # If samples < perplexity, sklearn warns or adjusts.
+    n_samples = data.shape[0]
+    eff_perplexity = min(perplexity, n_samples - 1) if n_samples > 1 else 1.0
+
+    tsne = TSNE(
+        n_components=2,
+        perplexity=eff_perplexity,
+        random_state=42,
+        init="pca",
+        learning_rate="auto",
+    )
+    tsne_results = tsne.fit_transform(data)
+
+    plt.figure(figsize=(8, 6))
+    if labels is not None:
+        labels = np.asarray(labels)
+        unique_labels = np.unique(labels)
+        for label in unique_labels:
+            indices = np.where(labels == label)
+            plt.scatter(
+                tsne_results[indices, 0],
+                tsne_results[indices, 1],
+                label=str(label),
+                alpha=0.7,
+            )
+        plt.legend()
+    else:
+        plt.scatter(
+            tsne_results[:, 0], tsne_results[:, 1], color=COLOR_A, alpha=0.7
+        )
+
+    plt.xlabel("t-SNE dimension 1")
+    plt.ylabel("t-SNE dimension 2")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output, dpi=300)
     plt.close()

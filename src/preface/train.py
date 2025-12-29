@@ -20,6 +20,8 @@ from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
 from preface.lib.functions import (
     plot_regression_performance,
     plot_classification_performance,
+    plot_pca,
+    plot_tsne,
     preprocess_ratios,
 )
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
@@ -34,6 +36,7 @@ EXCLUDE_CHRS: list[str] = ["13", "18", "21", "X", "Y"]
 class ModelOptions(Enum):
     NEURAL = "neural"
     XGBOOST = "xgboost"
+    SVM = "svm"
 
 
 def preface_train(
@@ -139,6 +142,27 @@ def preface_train(
     x_all: npt.NDArray = ratios_per_sample.drop(columns=["sex", "ff"]).to_numpy()
     y_all: npt.NDArray = ratios_per_sample[["sex", "ff"]].to_numpy()
 
+    # Run, Plot and export PCA
+    # -> Can't run PCA because the data still contains NaNs at this point
+    # pca_full = PCA(n_components=n_feat)
+    # components = pca_full.fit_transform(x_all)
+    # plot_pca(
+    #     pca_full,
+    #     principal_components=components,
+    #     labels=ratios_per_sample.index.to_list(),
+    #     output=out_dir / "pca_full.png",
+    #     title="PCA of all training samples",
+    # )
+
+    # Plot and export t-SNE
+    # -> Can't run t-SNE because the data still contains NaNs at this point
+    # plot_tsne(
+    #     data=x_all,
+    #     labels=ratios_per_sample.index.to_list(),
+    #     output=out_dir / "tsne_full.png",
+    #     title="t-SNE of all training samples",
+    # )
+
     train_params = {}
     if tune:
         # Enable hyperparameter tuning
@@ -172,6 +196,20 @@ def preface_train(
         fold_pca = PCA(n_components=n_feat)
         x_train = fold_pca.fit_transform(x_train)
         x_test = fold_pca.transform(x_test)
+
+        plot_pca(
+            fold_pca,
+            principal_components=x_train,
+            output=out_dir / "training_folds" / f"pca_fold_{fold}.png",
+            title=f"PCA of training fold {fold}",
+        )
+
+        plot_tsne(
+            data=x_train,
+            labels=ratios_per_sample.index.to_list(),
+            output=out_dir / "training_folds" / f"tsne_fold_{fold}.png",
+            title=f"t-SNE of training fold {fold}",
+        )
 
         # Train
         logging.info(f"Training fold {fold}...")
