@@ -1,14 +1,14 @@
 from pathlib import Path
 import numpy as np
 import numpy.typing as npt
+import onnx
 import optuna
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import GroupShuffleSplit
-from tensorflow.keras import (  # type: ignore # pylint: disable=no-name-in-module,import-error
-    Model,
-)
 from xgboost import XGBRegressor
 from sklearn.decomposition import PCA
+import onnxmltools
+from skl2onnx.common.data_types import FloatTensorType
 
 from preface.lib.impute import impute_nan, ImputeOptions
 
@@ -34,6 +34,8 @@ def xgboost_tune(
             "tree_method": "hist",
             # random state for reproducibility
             "random_state": 42,
+            # base score
+            "base_score": 0.5,
         }
         model = XGBRegressor(**params)
 
@@ -74,7 +76,7 @@ def xgboost_fit(
     y_train: npt.NDArray,
     y_test: npt.NDArray,
     params: dict,
-) -> tuple[Model, npt.NDArray]:
+) -> tuple[XGBRegressor, npt.NDArray]:
     """Build a xgboost model for regression."""
     # Training parameters
     xgb_default_params = {
@@ -84,6 +86,7 @@ def xgboost_fit(
         "learning_rate": 0.1,
         "random_state": 42,
         "early_stopping_rounds": 10,
+        "base_score": 0.5,
     }
 
     # Create model
@@ -94,5 +97,14 @@ def xgboost_fit(
 
     # Fit model
     model.fit(x_train, y_train, eval_set=[(x_test, y_test)])
-
     return model, model.predict(x_test)
+
+
+def xgboost_export(model: XGBRegressor) -> onnx.ModelProto:
+    """Export XGBoost model to ONNX format."""
+
+    initial_type = [("input", FloatTensorType([None, model.n_features_in_]))]
+    onnx_model = onnxmltools.convert_xgboost(
+        model, initial_types=initial_type, target_opset=12
+    )
+    return onnx_model

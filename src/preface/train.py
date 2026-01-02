@@ -300,7 +300,7 @@ def preface_train(
     x_all_eval = x.astype(np.float32)
 
     predictions = sess.run(None, {input_name: x_all_eval})
-    
+
     # Use first split's PCA for visualization
     first_pca = split_models[0][1]
 
