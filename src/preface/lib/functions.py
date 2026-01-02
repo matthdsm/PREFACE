@@ -60,5 +60,5 @@ def fit_rlm(x_values: npt.NDArray, y_values: npt.NDArray) -> tuple[float, float]
 def pca_export(pca: PCA, input_dim: int) -> onnx.ModelProto:
     """Export PCA model to ONNX format."""
     initial_type = [("input", FloatTensorType([None, input_dim]))]
-    pca_onnx = convert_sklearn(pca, initial_types=initial_type, target_opset=13)
+    pca_onnx = convert_sklearn(pca, initial_types=initial_type, target_opset=18)
     return pca_onnx  # type: ignore

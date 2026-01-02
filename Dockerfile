@@ -10,7 +10,7 @@ RUN pixi install --frozen --locked
 RUN pixi run pip install --no-deps .
 
 # Stage 2: Runtime
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 

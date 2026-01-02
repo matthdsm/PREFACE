@@ -6,31 +6,31 @@ readme = "README.md"
 authors = [
   { name = "Matthias De Smet", email = "matthias.desmet@ugent.be" },
 ]
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.13"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "pandas>=2.3.3,<3",
-    "numpy>=2.4.0,<3",
-    "scikit-learn>=1.8.0,<2",
-    "tensorflow>=2.20.0,<3",
-    "matplotlib>=3.10.8,<4",
-    "statsmodels>=0.14.6,<0.15",
-    "typer>=0.21.0,<0.22",
-    "rich>=14.2.0,<15",
-    "xgboost>=3.1.2,<4",
-    "optuna>=4.6.0,<5",
-    "optuna-integration[tfkeras]>=4.6.0,<5",
-    "plotly>=6.5.0,<7",
-    "kaleido>=1.2.0,<2",
-    "onnx>=1.20.0,<2",
-    "onnxmltools>=1.14.0,<2",
-    "skl2onnx>=1.19.1,<2",
-    "onnxconverter-common>=1.16.0,<2",
-    "onnxruntime>=1.23.2,<2",
-    "tf2onnx>=1.8.4,<2",
+    "kaleido",
+    "matplotlib",
+    "numpy",
+    "onnx",
+    "onnxconverter-common",
+    "onnxmltools",
+    "onnxruntime",
+    "optuna",
+    "optuna-integration[tfkeras]",
+    "pandas",
+    "plotly",
+    "rich",
+    "scikit-learn",
+    "skl2onnx",
+    "statsmodels",
+    "tensorflow",
+    "tf2onnx",
+    "typer",
+    "xgboost",
 ]
 
 [build-system]
@@ -59,3 +59,20 @@ PREFACE = { path = ".", editable = true }
 pylint = ">=4.0.4,<5"
 pytest = ">=8,<9"
 pytest-cov = ">=5,<6"
+python = "3.12.*"
+tf2onnx = ">=1.16.1,<2"
+tensorflow = ">=2.18.0,<3"
+onnxruntime = ">=1.22.2,<2"
+onnx = ">=1.17.0,<2"
+skl2onnx = ">=1.19.1,<2"
+matplotlib = ">=3.10.8,<4"
+numpy = ">=2.4.0,<3"
+onnxconverter-common = ">=1.16.0,<2"
+onnxmltools = ">=1.14.0,<2"
+optuna = ">=4.6.0,<5"
+pandas = ">=2.3.3,<3"
+plotly = ">=6.5.0,<7"
+rich = ">=14.2.0,<15"
+scikit-learn = ">=1.8.0,<2"
+typer = ">=0.21.0,<0.22"
+xgboost = ">=3.1.2,<4"

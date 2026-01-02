@@ -7,9 +7,11 @@ from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import GroupShuffleSplit
 from xgboost import XGBRegressor
 from sklearn.decomposition import PCA
-import onnxmltools
-from onnxmltools.convert.common.data_types import FloatTensorType
-
+from skl2onnx.common.data_types import FloatTensorType
+from skl2onnx import to_onnx, update_registered_converter
+from skl2onnx.common.shape_calculator import calculate_linear_regressor_output_shapes
+from skl2onnx.convert import may_switch_bases_classes_order
+from onnxmltools.convert.xgboost.operator_converters.XGBoost import convert_xgboost
 from preface.lib.impute import impute_nan, ImputeOptions
 
 
@@ -104,8 +106,15 @@ def xgboost_fit(
 def xgboost_export(model: XGBRegressor) -> onnx.ModelProto:
     """Export XGBoost model to ONNX format."""
 
-    initial_type = [("xgboost_input", FloatTensorType([None, model.n_features_in_]))]
-    onnx_model = onnxmltools.convert_xgboost(
-        model, initial_types=initial_type, target_opset=13
+    update_registered_converter(
+        XGBRegressor,
+        "XGBoostXGBRegressor",
+        calculate_linear_regressor_output_shapes,
+        convert_xgboost,
     )
+
+    with may_switch_bases_classes_order(XGBRegressor):
+        initial_type = [("xgboost_input", FloatTensorType([None, model.n_features_in_]))]
+        onnx_model = to_onnx(model, initial_types=initial_type, target_opset=18)
+
     return onnx_model

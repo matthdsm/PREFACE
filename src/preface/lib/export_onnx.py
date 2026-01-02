@@ -17,7 +17,7 @@ from preface.lib.svm import svm_export
 from preface.lib.xgboost import xgboost_export
 
 
-def _ensure_opset(model_proto: onnx.ModelProto, version: int = 13) -> onnx.ModelProto:
+def _ensure_opset(model_proto: onnx.ModelProto, version: int = 19) -> onnx.ModelProto:
     """
     Force the default domain opset to a specific version.
     """
@@ -35,9 +35,9 @@ def pca_export(pca: PCA, input_dim: int) -> onnx.ModelProto:
     pca_onnx = convert_sklearn(
         pca,
         initial_types=pca_initial_type,
-        target_opset=13,
+        target_opset=18,
     )
-    _ensure_opset(pca_onnx, 13)  # type: ignore
+    _ensure_opset(pca_onnx, 19)  # type: ignore
 
     return pca_onnx  # type: ignore
 
@@ -70,9 +70,9 @@ def ensemble_export(
         # 1. Convert Imputer
         initial_type = [("input", FloatTensorType([None, input_dim]))]
         imputer_onnx = convert_sklearn(
-            imputer, initial_types=initial_type, target_opset={"": 13, "ai.onnx.ml": 2}
+            imputer, initial_types=initial_type, target_opset=18
         )
-        _ensure_opset(imputer_onnx, 13)  # type: ignore
+        _ensure_opset(imputer_onnx, 19)  # type: ignore
 
         # Prefix Imputer
         imputer_onnx = add_prefix(imputer_onnx, prefix="imputer_")  # type: ignore
