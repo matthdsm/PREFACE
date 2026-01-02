@@ -7,6 +7,9 @@ from sklearn.svm import SVR
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.decomposition import PCA
 import optuna
+import onnxmltools
+import onnx
+from skl2onnx.common.data_types import FloatTensorType
 
 
 def svm_tune(
@@ -74,6 +77,15 @@ def svm_fit(
 
     # Create models
     model = SVR(**svr_default_params, **params)
-    model.fit(x_train, y_train)
+    model.fit(x_train, y_train.ravel())
 
     return model, model.predict(x_test)
+
+
+def svm_export(model: SVR) -> onnx.ModelProto:
+    """Export SVM model to ONNX format."""
+    initial_type = [("svm_input", FloatTensorType([None, model.n_features_in_]))]
+    onnx_model = onnxmltools.convert_sklearn(
+        model, initial_types=initial_type, target_opset=12
+    )
+    return onnx_model  # type: ignore
