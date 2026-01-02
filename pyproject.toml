@@ -57,3 +57,5 @@ PREFACE = { path = ".", editable = true }
 
 [tool.pixi.dependencies]
 pylint = ">=4.0.4,<5"
+pytest = ">=8,<9"
+pytest-cov = ">=5,<6"
