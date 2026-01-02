@@ -3,9 +3,8 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 import onnx
+import onnxmltools
 import optuna
-import tensorflow as tf
-import tf2onnx
 from sklearn.decomposition import PCA
 from sklearn.model_selection import GroupShuffleSplit
 from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
@@ -14,6 +13,7 @@ from tensorflow.keras import (  # pylint: disable=no-name-in-module,import-error
     layers,
 )
 from preface.lib.impute import ImputeOptions, impute_nan
+from onnxmltools.convert.common.data_types import FloatTensorType
 
 
 def create_model(
@@ -155,8 +155,6 @@ def neural_fit(
 
 def neural_export(model: Model) -> onnx.ModelProto:
     """Export neural network to ONNX format."""
-    input_signature = [tf.TensorSpec(model.input_shape, tf.float32, name="neural_input")]
-    onnx_model, _ = tf2onnx.convert.from_keras(
-        model, input_signature=input_signature, opset=13
-    )
+    initial_type = [("neural_input", FloatTensorType([None, model.input_shape[1]]))]
+    onnx_model = onnxmltools.convert_keras(model, initial_types=initial_type, target_opset=12)
     return onnx_model
