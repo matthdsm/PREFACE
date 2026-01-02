@@ -3,7 +3,7 @@ import numpy as np
 import numpy.typing as npt
 import optuna
 from sklearn.metrics import mean_squared_error
-from sklearn.model_selection import KFold
+from sklearn.model_selection import GroupShuffleSplit
 from tensorflow.keras import (  # type: ignore # pylint: disable=no-name-in-module,import-error
     Model,
 )
@@ -14,8 +14,9 @@ from preface.lib.impute import impute_nan, ImputeOptions
 
 
 def xgboost_tune(
-    features: npt.NDArray,
-    targets: npt.NDArray,
+    x: npt.NDArray,
+    y: npt.NDArray,
+    groups: npt.NDArray,
     n_components: int,
     outdir: Path,
     impute_option: ImputeOptions,
@@ -31,18 +32,18 @@ def xgboost_tune(
             "subsample": trial.suggest_float("subsample", 0.6, 1.0),
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
             "tree_method": "hist",
-            "multi_strategy": "multi_output_tree",
             # random state for reproducibility
             "random_state": 42,
         }
+        model = XGBRegressor(**params)
 
         # Internal split for the tuner
-        kf_internal = KFold(n_splits=3, shuffle=True)
+        gss_internal = GroupShuffleSplit(n_splits=3, test_size=0.2, random_state=42)
         scores = []
 
-        for t_idx, v_idx in kf_internal.split(features):
-            x_train, x_val = features[t_idx], features[v_idx]
-            y_train, y_val = targets[t_idx], targets[v_idx]
+        for _, (train_index, test_index) in enumerate(gss_internal.split(x, y, groups)):
+            x_train, x_val = x[train_index], x[test_index]
+            y_train, y_val = y[train_index], y[test_index]
 
             # impute missing values
             x_train, _ = impute_nan(x_train, impute_option)
@@ -54,7 +55,6 @@ def xgboost_tune(
             x_val = pca.transform(x_val)
 
             # Train and evaluate model
-            model = XGBRegressor(**params)
             model.fit(x_train, y_train)
             preds = model.predict(x_val)
             scores.append(mean_squared_error(y_val, preds))
@@ -74,12 +74,11 @@ def xgboost_fit(
     y_train: npt.NDArray,
     y_test: npt.NDArray,
     params: dict,
-) -> tuple[Model, dict]:
-    """Build a multi-output xgboost model for regression and classification."""
+) -> tuple[Model, npt.NDArray]:
+    """Build a xgboost model for regression."""
     # Training parameters
     xgb_default_params = {
         "tree_method": "hist",
-        "multi_strategy": "multi_output_tree",
         "n_estimators": 100,
         "max_depth": 6,
         "learning_rate": 0.1,
@@ -96,14 +95,4 @@ def xgboost_fit(
     # Fit model
     model.fit(x_train, y_train, eval_set=[(x_test, y_test)])
 
-    # Evaluate
-    preds = model.predict(x_test)
-    reg_preds = preds[:, 0]
-    class_probs = preds[:, 1]
-    class_preds = (class_probs > 0.5).astype(int)
-
-    return model, {
-        "regression_predictions": reg_preds,
-        "class_probabilities": class_probs,
-        "class_predictions": class_preds,
-    }
+    return model, model.predict(x_test)

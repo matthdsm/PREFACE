@@ -15,15 +15,9 @@ class ImputeOptions(Enum):
     KNN = "knn"  # impute missing values using k-nearest neighbors
 
 
-class ZeroImputer(SimpleImputer):
-    def fit(self, X, y=None):
-        self.fill_value = 0.0
-        return super().fit(X, y)
-
-
 def impute_nan(
     values: npt.NDArray, method: ImputeOptions
-) -> tuple[npt.NDArray, IterativeImputer | SimpleImputer | KNNImputer | ZeroImputer]:
+) -> tuple[npt.NDArray, IterativeImputer | SimpleImputer | KNNImputer]:
     """
     Handle NaN values
     Identify the type of missingness (MCAR, MAR, MNAR). Here we assume MAR.
@@ -54,7 +48,7 @@ def impute_nan(
     # Option 2: Assume missing values are zero (no change)
     elif method == ImputeOptions.ZERO:
         logging.info("Assuming missing values are zero...")
-        imputer = ZeroImputer()
+        imputer = SimpleImputer(strategy="constant", fill_value=0.0)
         imputed_values = imputer.fit_transform(values)
 
     # Option 3: Impute missing values by calculating mean

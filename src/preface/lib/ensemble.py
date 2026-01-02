@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import onnx
 import onnxmltools
 import tensorflow as tf
@@ -9,6 +10,7 @@ from onnx.compose import add_prefix, merge_models
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
 from sklearn.decomposition import PCA
+from sklearn.svm import SVR, SVC
 from tensorflow.keras import Model  # type: ignore
 from xgboost import XGBRegressor
 
@@ -25,7 +27,7 @@ def _ensure_opset(model_proto, version=12):
 
 
 def build_ensemble(
-    models: list[tuple[object, PCA, Model | XGBRegressor]],
+    models: list[tuple[object, PCA, Model | XGBRegressor | dict[str, SVR | SVC]]],
     input_dim: int,
     output_path: Path,
     metadata: dict[str, str] | None = None,
@@ -37,81 +39,58 @@ def build_ensemble(
     """
 
     prefixed_models = []
+    fold_info = []  # Store (model_type, reg_base, class_base) for each fold
 
     # Process each fold
     for i, (imputer, pca, model) in enumerate(models):
         fold_prefix = f"fold_{i}_"
 
-        # 1. Convert Imputer (if exists)
-        # Input to Imputer is FloatTensorType([None, input_dim])
+        # Convert Imputer
         initial_type = [("input", FloatTensorType([None, input_dim]))]
 
-        if imputer is not None:
-            # simple imputer
-            imp_onnx = convert_sklearn(
-                imputer, initial_types=initial_type, target_opset=12
-            )
-            _ensure_opset(imp_onnx, 12)
+        # sklearn imputer
+        imputer_onnx = convert_sklearn(
+            imputer, initial_types=initial_type, target_opset=12
+        )
+        _ensure_opset(imputer_onnx, 12)
 
-            # Rename output of imputer to match input of PCA
-            # But wait, we can just chain them via merge_models later?
-            # Easier to chain them linearly first or merge step by step.
-            current_model = imp_onnx
-            # The output name of sklearn models is typically "variable" or similar.
-            # We need to find the output name.
-            imp_out_name = current_model.graph.output[0].name  # type: ignore
-        else:
-            # No imputer (ZERO strategy). We need a "Identity" or just pass input.
-            # However, if we want to fill NaNs with 0, we might need a custom ONNX node or assume input has 0s.
-            # For now, let's assume the user handles NaN -> 0 before or use Identity.
-            # Actually, `convert_sklearn` handles NaN?
-            # If the user selected ZERO, they expect NaNs to be 0.
-            # We can create a simple graph that takes input and returns input (Identity),
-            # relying on the caller to provide 0s or ONNX runtime to handle it.
-            # BETTER: create a dummy identity model.
+        # Prefix Imputer
+        imputer_onnx = add_prefix(imputer_onnx, prefix="imputer_")  # type: ignore
+        imputer_out_name = imputer_onnx.graph.output[0].name  # type: ignore
 
-            # For simplicity in this fix, we assume input is already clean if imputer is None,
-            # OR we rely on the fact that we can't easily inject "FillNaN(0)" without complex node creation.
-            # Let's start with the PCA conversion using the initial type.
-            current_model = None
-            imp_out_name = "input"
-
-        # 2. Convert PCA
-        # Input to PCA is the output of Imputer (or "input")
-        if current_model:
-            # If we have an imputer model, the PCA input type should match its output
-            # But convert_sklearn needs `initial_types`.
-            # We can convert PCA independently with same shape.
-            pca_initial_type = [("input_pca", FloatTensorType([None, input_dim]))]
-        else:
-            pca_initial_type = initial_type
-
+        # Convert PCA
+        # Imputer -> PCA
+        # Use pca.n_features_in_ to handle case where imputer reduced dimensions
+        n_features_pca = getattr(pca, "n_features_in_", input_dim)
+        pca_initial_type = [("input_pca", FloatTensorType([None, n_features_pca]))]
         pca_onnx = convert_sklearn(pca, initial_types=pca_initial_type, target_opset=12)
         _ensure_opset(pca_onnx, 12)
+
+        # Prefix PCA
+        pca_onnx = add_prefix(pca_onnx, prefix="pca_")  # type: ignore
         pca_in_name = pca_onnx.graph.input[0].name  # type: ignore
         pca_out_name = pca_onnx.graph.output[0].name  # type: ignore
 
-        if current_model:
-            # Merge Imputer + PCA
-            current_model = merge_models(
-                current_model,  # type: ignore
-                pca_onnx,  # type: ignore
-                io_map=[(imp_out_name, pca_in_name)],  # type: ignore
-            )
-            # Update output name
-            current_out_name = pca_out_name
-        else:
-            current_model = pca_onnx
-            current_out_name = pca_out_name
-            # If we had no imputer, we need to rename the input to "input" to standardize
-            # actually pca_onnx input is "input" (from initial_type) or "input_pca".
-            # We will handle renaming at the global merge.
+        # Merge Imputer + PCA
+        current_model = merge_models(
+            imputer_onnx,  # type: ignore
+            pca_onnx,  # type: ignore
+            io_map=[(imputer_out_name, pca_in_name)],  # type: ignore
+        )
+        # Update output name
+        current_out_name = pca_out_name
 
         # 3. Convert Model
         # Input to Model is PCA output. Shape: [None, n_components]
         n_comps = pca.n_components_
 
-        model_type = "nn" if isinstance(model, Model) else "xgb"
+        model_type = "unknown"
+        if isinstance(model, Model):
+            model_type = "nn"
+        elif isinstance(model, (dict, list, tuple)):  # Handle dict for SVM
+            model_type = "svm"
+        else:
+            model_type = "xgb"
 
         if model_type == "nn":
             spec = (tf.TensorSpec((None, n_comps), tf.float32, name="input_model"),)  # type: ignore
@@ -119,6 +98,22 @@ def build_ensemble(
                 model, input_signature=spec, opset=12
             )
             m_onnx.graph.name = f"fold_{i}_model"
+
+            # Prefix NN
+            m_onnx = add_prefix(m_onnx, prefix="nn_")
+            m_in_name = m_onnx.graph.input[0].name
+
+            # Merge (Imputer+PCA) + Model
+            current_model = merge_models(
+                current_model,  # type: ignore
+                m_onnx,
+                io_map=[(current_out_name, m_in_name)],  # type: ignore
+            )
+
+            # Record outputs
+            # Assuming standard naming for NN for now as we can't easily inspect without graph structure knowledge
+            fold_info.append(("nn", "nn_reg_output", "nn_class_output"))
+
         elif model_type == "xgb":
             m_onnx = onnxmltools.convert_xgboost(
                 model,
@@ -126,14 +121,86 @@ def build_ensemble(
                 target_opset=12,
             )
 
-        m_in_name = m_onnx.graph.input[0].name
+            # Prefix XGB
+            m_onnx = add_prefix(m_onnx, prefix="xgb_")
+            m_in_name = m_onnx.graph.input[0].name
 
-        # Merge (Imputer+PCA) + Model
-        current_model = merge_models(
-            current_model,  # type: ignore
-            m_onnx,
-            io_map=[(current_out_name, m_in_name)],  # type: ignore
-        )
+            # Capture output name
+            xgb_out_base = m_onnx.graph.output[0].name
+
+            # Merge (Imputer+PCA) + Model
+            current_model = merge_models(
+                current_model,  # type: ignore
+                m_onnx,
+                io_map=[(current_out_name, m_in_name)],  # type: ignore
+            )
+
+            fold_info.append(("xgb", xgb_out_base, None))
+
+        elif model_type == "svm":
+            # Expecting dict with 'SVR' and 'SVC'
+            svr = model["SVR"]
+            svc = model["SVC"]
+
+            # Patch SVR if no support vectors (e.g. large epsilon)
+            if hasattr(svr, "support_vectors_") and svr.support_vectors_.shape[0] == 0:
+                # Add dummy support vector with 0 weight
+                dummy_sv = np.zeros(
+                    (1, svr.support_vectors_.shape[1]), dtype=np.float32
+                )
+                svr.support_vectors_ = dummy_sv
+
+                # Patch internal attributes used by coef_ property
+                svr._dual_coef_ = np.zeros((1, 1), dtype=np.float32)
+                svr.dual_coef_ = svr._dual_coef_
+
+                if hasattr(svr, "_n_support"):
+                    svr._n_support = np.array([1], dtype=np.int32)
+
+            # Convert SVR
+            svr_onnx = convert_sklearn(
+                svr,
+                initial_types=[("input_svr", FloatTensorType([None, n_comps]))],
+                target_opset=12,
+            )
+            _ensure_opset(svr_onnx, 12)
+
+            # Prefix SVR
+            svr_onnx = add_prefix(svr_onnx, prefix="svr_")
+            svr_in_name = svr_onnx.graph.input[0].name
+            svr_out_base = svr_onnx.graph.output[0].name
+
+            # Convert SVC
+            # zipmap=False is important to get probabilities as tensor
+            svc_onnx = convert_sklearn(
+                svc,
+                initial_types=[("input_svc", FloatTensorType([None, n_comps]))],
+                target_opset=12,
+                options={"zipmap": False},
+            )
+            _ensure_opset(svc_onnx, 12)
+
+            # Prefix SVC
+            svc_onnx = add_prefix(svc_onnx, prefix="svc_")
+            svc_in_name = svc_onnx.graph.input[0].name
+            # Output 0 is label, Output 1 is probabilities (usually)
+            svc_out_base = svc_onnx.graph.output[1].name
+
+            # Combine SVR and SVC into one model (parallel branches)
+            svm_combined = merge_models(svr_onnx, svc_onnx, io_map=[])
+
+            # Merge (Imputer+PCA) with (SVR+SVC)
+            # Connect PCA output to both SVR and SVC inputs
+            current_model = merge_models(
+                current_model,
+                svm_combined,
+                io_map=[
+                    (current_out_name, svr_in_name),
+                    (current_out_name, svc_in_name),
+                ],
+            )
+
+            fold_info.append(("svm", svr_out_base, svc_out_base))
 
         # Prefix everything in this fold's graph
         prefixed_model = add_prefix(current_model, prefix=fold_prefix)
@@ -145,12 +212,6 @@ def build_ensemble(
     # Start with the first fold
     combined_model = prefixed_models[0]
 
-    # Identify the input name of the first fold
-    # It should be "fold_0_input" (if we used "input" name initially)
-    # logic: add_prefix adds prefix to all names.
-    # The input of the chain was "input" (or "input_pca").
-    # So it becomes "fold_0_input".
-
     for i in range(1, len(prefixed_models)):
         combined_model = merge_models(
             combined_model,
@@ -160,10 +221,6 @@ def build_ensemble(
 
     graph = combined_model.graph
 
-    # Now we need to broadcast the global "input" to "fold_0_input", "fold_1_input", ...
-    # We create a new input "global_input" and Identity nodes or just rewire?
-    # Rewiring is safer.
-
     # Find all inputs that look like "fold_X_input" or "fold_X_input_pca"
     fold_inputs = []
     for node in graph.input:
@@ -172,15 +229,8 @@ def build_ensemble(
 
     # Create a global input
     global_input_name = "input"
-    # remove existing inputs from graph.input (they become internal nodes fed by global input)
-    # Actually, we can just rename them? No, they are distinct nodes in the graph now?
-    # If we map them to the same tensor, they get connected.
 
-    # Let's add an Identity node for each fold input, fed by global_input
-    # Or simpler: create the global input, and add Split? Or just use same name?
-    # In ONNX, if multiple nodes use "input", it's valid.
-
-    # So we want to replace all usages of "fold_i_input" with "global_input".
+    # Replace all usages of "fold_i_input" with "global_input".
     for node in graph.node:
         for idx, input_name in enumerate(node.input):
             if input_name in fold_inputs:
@@ -201,41 +251,28 @@ def build_ensemble(
     )
 
     # --- Average Outputs ---
-    # Identify outputs.
-    # NN: fold_i_reg_output, fold_i_class_output
-    # XGB: fold_i_variable (output of regressor) -> need to split?
-
-    # Note: earlier XGB code said it outputs [Batch, 2] for multi-output.
-    # We need to find the output names of the fold graphs.
-
     reg_names = []
     class_names = []
 
     # Helper to find output names
-    for i, (_, _, model) in enumerate(models):
-        model_type = "nn" if isinstance(model, Model) else "xgb"
+    for i, (model_type, reg_base, class_base) in enumerate(fold_info):
         prefix = f"fold_{i}_"
 
         if model_type == "nn":
             # Keras outputs are typically named by layer names.
-            # In neural.py: "reg_output", "class_output"
-            reg_names.append(prefix + "reg_output")
-            class_names.append(prefix + "class_output")
-        else:
-            # XGBoost multi-output
-            # The output name from onnxmltools for XGB is usually "variable"
-            xgb_out = prefix + "variable"
+            # We added "nn_" prefix.
+            reg_names.append(prefix + reg_base)
+            class_names.append(prefix + class_base)
+
+        elif model_type == "xgb":
+            # XGBoost output "variable" -> "xgb_variable"
+            xgb_out = prefix + reg_base
 
             # We need to split this output. It is [Batch, 2].
             # Column 0: Reg, Column 1: Class (Prob)
 
-            # Add Split node
             split_reg = f"{prefix}reg_split"
             split_class = f"{prefix}class_split"
-
-            # Create Split node
-            # Attributes: axis=1, split=[1,1]
-            # Output: [split_reg, split_class]
 
             split_node = helper.make_node(
                 "Split",
@@ -249,6 +286,33 @@ def build_ensemble(
 
             reg_names.append(split_reg)
             class_names.append(split_class)
+
+        elif model_type == "svm":
+            # SVR output "variable" -> "svr_variable"
+            # SVC output "output_probability" -> "svc_output_probability"
+
+            svm_reg_out = prefix + reg_base
+            svm_class_prob_out = prefix + class_base
+
+            reg_names.append(svm_reg_out)
+
+            # SVC probability output is [Batch, 2] (prob class 0, prob class 1).
+            # We need to extract the second column (class 1).
+
+            svm_class_split = f"{prefix}class_prob_split"
+            svm_class_0_dummy = f"{prefix}class_prob_0_dummy"
+
+            split_node_svm = helper.make_node(
+                "Split",
+                inputs=[svm_class_prob_out],
+                outputs=[svm_class_0_dummy, svm_class_split],
+                name=f"{prefix}SVMSplit",
+                axis=1,
+                split=[1, 1],
+            )
+            graph.node.append(split_node_svm)
+
+            class_names.append(svm_class_split)
 
     # Add Mean nodes
     final_reg_name = "final_ff_score"

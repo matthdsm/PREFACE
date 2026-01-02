@@ -13,18 +13,18 @@ import numpy as np
 import numpy.typing as npt
 import onnxruntime as ort
 from sklearn.decomposition import PCA
-from sklearn.metrics import f1_score, mean_absolute_error, r2_score, roc_auc_score
-from sklearn.model_selection import KFold
+from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.model_selection import GroupShuffleSplit
 from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
 
 from preface.lib.functions import (
     plot_regression_performance,
-    plot_classification_performance,
     plot_pca,
     plot_tsne,
     preprocess_ratios,
 )
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
+from preface.lib.svm import svm_tune, svm_fit
 from preface.lib.neural import neural_tune, neural_fit
 from preface.lib.impute import ImputeOptions, impute_nan
 from preface.lib.ensemble import build_ensemble
@@ -52,8 +52,8 @@ def preface_train(
         EXCLUDE_CHRS, "--exclude-chrs", help="Chromosomes to exclude from training"
     ),
     # cross validation options
-    n_folds: int = typer.Option(
-        5, "--nfolds", help="Number of folds for cross-validation"
+    n_splits: int = typer.Option(
+        50, "--nsplits", help="Number of splits for cross-validation"
     ),
     # PCA options
     n_feat: int = typer.Option(
@@ -136,83 +136,101 @@ def preface_train(
     # set index to ID column
     ratios_per_sample = ratios_per_sample.set_index("id")
 
+    # Check missingness
+    # Drop columns with more than 1% missing values
+    missingness = ratios_per_sample.isnull().mean()
+    cols_to_drop = missingness[missingness > 0.01].index
+    if len(cols_to_drop) > 0:
+        logging.warning(
+            f"Dropping {len(cols_to_drop)} bins with more than 1% missing values."
+        )
+        ratios_per_sample = ratios_per_sample.drop(columns=cols_to_drop)
+
     logging.info("Creating training frame...")
 
     # Split into features and labels
-    x_all: npt.NDArray = ratios_per_sample.drop(columns=["sex", "ff"]).to_numpy()
-    y_all: npt.NDArray = ratios_per_sample[["sex", "ff"]].to_numpy()
+    target_cols = ["sex", "ff"]
+    x: npt.NDArray = ratios_per_sample.drop(columns=target_cols).to_numpy()
+    # x_male: npt.NDArray = ratios_per_sample[ratios_per_sample["sex"] == 1].drop(columns=target_cols).to_numpy()
+    # x_female: npt.NDArray = ratios_per_sample[ratios_per_sample["sex"] == 0].drop(columns=target_cols).to_numpy()
+    y: npt.NDArray = ratios_per_sample[["ff"]].to_numpy()
+    # y_male: npt.NDArray = ratios_per_sample[ratios_per_sample["sex"] == 1][["ff"]].to_numpy()
+    # y_female: npt.NDArray = ratios_per_sample[ratios_per_sample["sex"] == 0][["ff"]].to_numpy()
 
-    # Run, Plot and export PCA
-    # -> Can't run PCA because the data still contains NaNs at this point
-    # pca_full = PCA(n_components=n_feat)
-    # components = pca_full.fit_transform(x_all)
-    # plot_pca(
-    #     pca_full,
-    #     principal_components=components,
-    #     labels=ratios_per_sample.index.to_list(),
-    #     output=out_dir / "pca_full.png",
-    #     title="PCA of all training samples",
-    # )
-
-    # Plot and export t-SNE
-    # -> Can't run t-SNE because the data still contains NaNs at this point
-    # plot_tsne(
-    #     data=x_all,
-    #     labels=ratios_per_sample.index.to_list(),
-    #     output=out_dir / "tsne_full.png",
-    #     title="t-SNE of all training samples",
-    # )
+    # Generate bins for the target
+    # prevent data leakage and keep the distribution
+    groups = np.digitize(y, bins=np.percentile(y, [25, 50, 75]))
 
     train_params = {}
     if tune:
         # Enable hyperparameter tuning
         logging.info("Tuning hyperparameters...")
-        tuner = neural_tune if model_type == ModelOptions.NEURAL else xgboost_tune
-        train_params = tuner(x_all, y_all, n_feat, out_dir, impute)
+        if model_type == ModelOptions.NEURAL:
+            logging.info("Tuning neural network hyperparameters...")
+            tuner = neural_tune
+        elif model_type == ModelOptions.XGBOOST:
+            logging.info("Tuning XGBoost hyperparameters...")
+            tuner = xgboost_tune
+        elif model_type == ModelOptions.SVM:
+            logging.info("Tuning SVM hyperparameters...")
+            tuner = svm_tune
+        else:
+            logging.error("Invalid model type specified for tuning.")
+            raise typer.Exit(code=1)
 
-    # Set up training (k-fold cross-validation)
-    # Create directory to store fold metrics
-    os.makedirs(out_dir / "training_folds", exist_ok=True)
-    fold_metrics = []
-    fold_models: list[tuple[object, PCA, keras.Model]] = []
+        train_params = tuner(
+            x=x,
+            y=y,
+            groups=groups,
+            n_components=n_feat,
+            outdir=out_dir,
+            impute_option=impute,
+        )
 
-    # Set up k-fold cross-validation
-    kf: KFold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-    for fold, (train_idx, test_idx) in enumerate(kf.split(x_all), 1):
-        logging.info(f"Processing Fold {fold}/{n_folds}...")
+    # Set up training (cross-validation)
+    # Create directory to store split metrics
+    os.makedirs(out_dir / "training_splits", exist_ok=True)
+    split_metrics = []
+    split_models: list[tuple[object, PCA, keras.Model]] = []
+
+    # Set up cross-validation
+    gss: GroupShuffleSplit = GroupShuffleSplit(
+        n_splits=n_splits, test_size=0.2, random_state=42
+    )
+    for split, (train_idx, test_idx) in enumerate(gss.split(x, y, groups), 1):
+        logging.info(f"Processing split {split}/{n_splits}...")
 
         # split into train and test sets
-        x_train, x_test = x_all[train_idx], x_all[test_idx]
-        y_train, y_test = y_all[train_idx], y_all[test_idx]
-
-        y_test_class: npt.NDArray = y_test[:, 0]
-        y_test_reg: npt.NDArray = y_test[:, 1]
+        x_train, x_test = x[train_idx], x[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
 
         # impute data
         x_train, imputer = impute_nan(x_train, impute)
         x_test, _ = impute_nan(x_test, impute)
 
-        # reduce dimensionality with PCA for each fold to prevent data leakage
-        fold_pca = PCA(n_components=n_feat)
-        x_train = fold_pca.fit_transform(x_train)
-        x_test = fold_pca.transform(x_test)
+        # reduce dimensionality with PCA for each split to prevent data leakage
+        split_pca = PCA(n_components=n_feat)
+        x_train = split_pca.fit_transform(x_train)
+        x_test = split_pca.transform(x_test)
+
+        train_labels = ratios_per_sample.index.to_numpy()[train_idx].tolist()
 
         plot_pca(
-            fold_pca,
+            split_pca,
             principal_components=x_train,
-            output=out_dir / "training_folds" / f"pca_fold_{fold}.png",
-            title=f"PCA of training fold {fold}",
+            output=out_dir / "training_splits" / f"pca_split_{split}.png",
+            title=f"PCA of training split {split}",
         )
 
         plot_tsne(
             data=x_train,
-            labels=ratios_per_sample.index.to_list(),
-            output=out_dir / "training_folds" / f"tsne_fold_{fold}.png",
-            title=f"t-SNE of training fold {fold}",
+            labels=train_labels,
+            output=out_dir / "training_splits" / f"tsne_split_{split}.png",
+            title=f"t-SNE of training split {split}",
         )
 
         # Train
-        logging.info(f"Training fold {fold}...")
+        logging.info(f"Training split {split}...")
         if model_type == ModelOptions.NEURAL:
             model, predictions = neural_fit(
                 x_train,
@@ -221,61 +239,54 @@ def preface_train(
                 y_test,
                 train_params,
             )
-            # Save fold model
-            model.save(out_dir / "training_folds" / f"fold_{fold}.keras")  # type: ignore
 
         elif model_type == ModelOptions.XGBOOST:
             model, predictions = xgboost_fit(
                 x_train, x_test, y_train, y_test, train_params
             )
-            model.save_model(out_dir / "training_folds" / f"fold_{fold}.bin")  # type: ignore
 
-        fold_models.append((imputer, fold_pca, model))
+        elif model_type == ModelOptions.SVM:
+            model, predictions = svm_fit(x_train, x_test, y_train, y_test, train_params)
+
+        else:
+            logging.error("Invalid model type specified for training.")
+            raise typer.Exit(code=1)
+        split_models.append((imputer, split_pca, model))
 
         # Plot regression performance
         reg_perf = plot_regression_performance(
-            predictions["regression_predictions"],
-            y_test_reg,
-            fold_pca.explained_variance_ratio_,
+            predictions,
+            y_test,
+            split_pca.explained_variance_ratio_,
             n_feat,
             "PREFACE (%)",
             "FF (%)",
-            out_dir / "training_folds" / f"fold_{fold}_regression.png",
-        )
-
-        # Plot classification performance
-        plot_classification_performance(
-            predictions["class_probabilities"],
-            y_test_class,
-            out_dir / "training_folds" / f"fold_{fold}_classification.png",
+            out_dir / "training_splits" / f"split_{split}_regression.png",
         )
 
         # return metrics
         metrics: dict = {
-            # fold number
-            "fold": fold,
+            # split number
+            "split": split,
             # regression metrics
             "ff_mae": mean_absolute_error(
-                y_test_reg, predictions["regression_predictions"]
+                y_test, predictions["regression_predictions"]
             ),
-            "ff_r2": r2_score(y_test_reg, predictions["regression_predictions"]),
+            "ff_r2": r2_score(y_test, predictions["regression_predictions"]),
             "ff_intercept": reg_perf["intercept"],
             "ff_slope": reg_perf["slope"],
-            # classification metrics
-            "sex_f1": f1_score(y_test_class, predictions["class_predictions"]),
-            "sex_auc": roc_auc_score(y_test_class, predictions["class_probabilities"]),
         }
-        fold_metrics.append(metrics)
+        split_metrics.append(metrics)
 
-    # Save fold metrics to a DataFrame
-    fold_metrics_df = pd.DataFrame(fold_metrics)
-    fold_metrics_df.to_csv(out_dir / "training_fold_metrics.csv", index=False)
+    # Save split metrics to a DataFrame
+    split_metrics_df = pd.DataFrame(split_metrics)
+    split_metrics_df.to_csv(out_dir / "training_split_metrics.csv", index=False)
 
-    # Build ensemble model from fold models
-    logging.info("Building ensemble model from fold models...")
+    # Build ensemble model from split models
+    logging.info("Building ensemble model from split models...")
     build_ensemble(
-        fold_models,
-        x_all.shape[1],
+        split_models,
+        x.shape[1],
         out_dir / "PREFACE.onnx",
         metadata={"exclude_chrs": ",".join(exclude_chrs)},
     )
@@ -286,26 +297,16 @@ def preface_train(
     # Load ONNX model
     sess = ort.InferenceSession(out_dir / "PREFACE.onnx")
     input_name = sess.get_inputs()[0].name
-
-    # Handle NaNs for evaluation if ZERO strategy was used (since ONNX graph might expect clean input for that case)
-    if impute == ImputeOptions.ZERO:
-        x_all_eval = np.nan_to_num(x_all, nan=0.0)
-    else:
-        x_all_eval = x_all
-
-    x_all_eval = x_all_eval.astype(np.float32)
+    x_all_eval = x.astype(np.float32)
 
     predictions = sess.run(None, {input_name: x_all_eval})
-    y_ff_pred = predictions[0].flatten()  # type: ignore
-
-    y_ff_all = y_all[:, 1]
-
-    # Use first fold's PCA for visualization
-    first_pca = fold_models[0][1]
+    
+    # Use first split's PCA for visualization
+    first_pca = split_models[0][1]
 
     info_overall = plot_regression_performance(
-        y_ff_pred,
-        y_ff_all,
+        predictions[0],  # type: ignore
+        y,
         first_pca.explained_variance_ratio_,
         n_feat,
         "PREFACE (%)",

@@ -10,10 +10,6 @@ from sklearn.linear_model import LinearRegression
 from sklearn.manifold import TSNE
 from sklearn.metrics import (
     mean_absolute_error,
-    roc_curve,
-    auc,
-    confusion_matrix,
-    ConfusionMatrixDisplay,
 )
 
 
@@ -33,7 +29,13 @@ def preprocess_ratios(ratios_df: pd.DataFrame, exclude_chrs: list[str]) -> pd.Da
     # exclude chromosomes
     ratios_df = ratios_df[~ratios_df["chr"].isin(exclude_chrs)].copy()
     # add region column
-    ratios_df["region"] = (ratios_df["chr"] + ":" + ratios_df["start"].astype(str) + "-" + ratios_df["end"].astype(str))  # type: ignore
+    ratios_df["region"] = (
+        ratios_df["chr"]
+        + ":"  # type: ignore
+        + ratios_df["start"].astype(str)
+        + "-"
+        + ratios_df["end"].astype(str)
+    )  # type: ignore
     # drop chr, start, end columns
     ratios_df.drop(columns=["chr", "start", "end"], inplace=True)
     # set region as index and transpose
@@ -190,45 +192,6 @@ def plot_regression_performance(
     }
 
 
-def plot_classification_performance(
-    y_prob: np.ndarray,
-    y_true: np.ndarray,
-    path: Path,
-) -> None:
-    """
-    Plot classification performance (ROC and Confusion Matrix).
-    """
-    _, axes = plt.subplots(1, 2, figsize=(10, 5))
-
-    # ROC Curve
-    ax = axes[0]
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
-    roc_auc = auc(fpr, tpr)
-
-    ax.plot(fpr, tpr, color=COLOR_A, lw=2, label=f"ROC curve (area = {roc_auc:.2f})")
-    ax.plot([0, 1], [0, 1], color=COLOR_B, lw=2, linestyle="--")
-    ax.set_xlim([0.0, 1.0])
-    ax.set_ylim([0.0, 1.05])
-    ax.set_xlabel("False Positive Rate")
-    ax.set_ylabel("True Positive Rate")
-    ax.set_title("Receiver Operating Characteristic")
-    ax.legend(loc="lower right")
-
-    # Confusion Matrix
-    ax = axes[1]
-    y_pred = (y_prob >= 0.5).astype(int)
-    cm = confusion_matrix(y_true, y_pred)
-    disp = ConfusionMatrixDisplay(
-        confusion_matrix=cm, display_labels=["Female", "Male"]
-    )
-    disp.plot(ax=ax, cmap="Blues", colorbar=False)
-    ax.set_title("Confusion Matrix")
-
-    plt.tight_layout()
-    plt.savefig(path, dpi=300)
-    plt.close()
-
-
 def fit_rlm(x_values: np.ndarray, y_values: np.ndarray):
     """
     Fit robust linear model (RLM) and return intercept and slope.
@@ -372,9 +335,7 @@ def plot_tsne(
             )
         plt.legend()
     else:
-        plt.scatter(
-            tsne_results[:, 0], tsne_results[:, 1], color=COLOR_A, alpha=0.7
-        )
+        plt.scatter(tsne_results[:, 0], tsne_results[:, 1], color=COLOR_A, alpha=0.7)
 
     plt.xlabel("t-SNE dimension 1")
     plt.ylabel("t-SNE dimension 2")
