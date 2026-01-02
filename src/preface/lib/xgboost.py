@@ -40,7 +40,7 @@ def xgboost_tune(
         model = XGBRegressor(**params)
 
         # Internal split for the tuner
-        gss_internal = GroupShuffleSplit(n_splits=3, test_size=0.2, random_state=42)
+        gss_internal = GroupShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
         scores = []
 
         for _, (train_index, test_index) in enumerate(gss_internal.split(x, y, groups)):

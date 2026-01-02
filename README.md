@@ -47,22 +47,37 @@ pixi run PREFACE --help
 
 ## Model training
 
+The core of PREFACE is its ability to train a predictive model on your own cohort data.
+
 ```bash
 PREFACE train --samplesheet path/to/samplesheet.tsv [optional arguments]
 ```
+
+### Training Process
+
+The training pipeline is a robust, multi-step process designed to build a generalized and accurate model:
+
+1.  **Data Loading & Preprocessing**: The tool begins by loading all samples defined in the samplesheet. It checks for data consistency across files and filters out genomic bins (features) that have more than 1% missing values.
+2.  **Imputation**: Any remaining missing values (`NaN`) are handled using the strategy specified by the `--impute` option (e.g., filling with the mean, median, using MICE or k-NN).
+3.  **Cross-Validation**: To prevent overfitting and get a reliable estimate of performance, PREFACE uses a `GroupShuffleSplit` strategy. It repeatedly splits the data into training and testing sets, ensuring that the distribution of fetal fraction values is similar in each split.
+4.  **Dimensionality Reduction**: For each training split, Principal Component Analysis (PCA) is performed to reduce the high-dimensional genomic data into a smaller, more informative set of features (`--nfeat`).
+5.  **Model Fitting**: A predictive model is trained on the PCA-reduced data. You can choose between three architectures using the `--model` flag: a `neural` network, `xgboost`, or `svm`.
+6.  **Hyperparameter Tuning (Optional)**: If you add the `--tune` flag, PREFACE will first run an optimization process using Optuna to find the best hyperparameters for the chosen model architecture on your specific dataset.
+7.  **Ensemble Creation**: Instead of relying on a single model, PREFACE builds an ensemble from all the models trained during the cross-validation splits. This technique typically results in a more robust and accurate final model. The ensemble, including the complete preprocessing pipeline (imputation and PCA), is saved as a single `PREFACE.onnx` file.
 
 ### Options
 
 | Argument | Type | Default | Function |
 | :--- | :--- | :--- | :--- |
 | `--samplesheet` | PATH | (Required) | Path to the samplesheet TSV file. |
-| `--outdir` | PATH | `.` | Output directory for models and plots. |
+| `--outdir` | PATH | (Current Dir) | Output directory for models and plots. |
 | `--impute` | [zero\|mice\|mean\|median\|knn] | `zero` | Strategy to handle missing values (NaNs). |
 | `--exclude-chrs` | TEXT | `13,18,21,X,Y` | Chromosomes to exclude from training features. |
-| `--nfolds` | INTEGER | `5` | Number of folds for cross-validation. |
+| `--nsplits` | INTEGER | `10` | Number of splits for cross-validation. |
 | `--nfeat` | INTEGER | `50` | Number of features (PCA components) to use. |
 | `--tune` | BOOLEAN | `False` | Enable automatic hyperparameter tuning (via Optuna). |
-| `--model` | [neural\|xgboost] | `neural` | Type of model architecture to train. |
+| `--model` | [neural\|xgboost\|svm] | `neural` | Type of model architecture to train. |
+
 
 ## Predicting
 

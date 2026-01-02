@@ -52,7 +52,7 @@ def preface_train(
     ),
     # cross validation options
     n_splits: int = typer.Option(
-        50, "--nsplits", help="Number of splits for cross-validation"
+        10, "--nsplits", help="Number of splits for cross-validation"
     ),
     # PCA options
     n_feat: int = typer.Option(
@@ -73,6 +73,11 @@ def preface_train(
     start_time: float = time.time()
 
     # Load samplesheet
+    # Check if samplesheet exists
+    if not samplesheet.exists() or not samplesheet.is_file():
+        logging.error(f"Samplesheet file '{samplesheet}' does not exist.")
+        raise typer.Exit(code=1)
+    samplesheet_dir: Path = samplesheet.parent.resolve()
     samplesheet_data: pd.DataFrame = pd.read_csv(
         samplesheet, comment="#", sep="\t", dtype={"sex": str, "ID": str}
     )
@@ -95,15 +100,16 @@ def preface_train(
         logging.info(
             f"Processing sample {sample['ID']} ({i + 1}/{len(samplesheet_data)})..."  # type: ignore
         )
+        data_path = samplesheet_dir / Path(sample["filepath"])
         if (
-            not Path(sample["filepath"]).exists()
-            or not Path(sample["filepath"]).is_file()  # noqa: W503
+            not data_path.exists()
+            or not data_path.is_file()  # noqa: W503
         ):
-            logging.error(f"File '{sample['filepath']}' does not exist.")
+            logging.error(f"File '{data_path}' does not exist.")
             raise typer.Exit(code=1)
         # load ratios (bed format)
         ratios = pd.read_csv(
-            sample["filepath"],
+            data_path,
             dtype={"chr": str, "start": int, "end": int, "ratio": float},
             sep="\t",
             header=0,
@@ -141,7 +147,7 @@ def preface_train(
     cols_to_drop = missingness[missingness > 0.01].index
     if len(cols_to_drop) > 0:
         logging.warning(
-            f"Dropping {len(cols_to_drop)} bins with more than 1% missing values."
+            f"Dropping {len(cols_to_drop)} regions with more than 1% missing values."
         )
         ratios_per_sample = ratios_per_sample.drop(columns=cols_to_drop)
 
@@ -196,7 +202,7 @@ def preface_train(
     gss: GroupShuffleSplit = GroupShuffleSplit(
         n_splits=n_splits, test_size=0.2, random_state=42
     )
-    for split, (train_idx, test_idx) in enumerate(gss.split(x, y, groups), 1):
+    for split, (train_idx, test_idx) in enumerate(gss.split(x, y, groups)):
         logging.info(f"Processing split {split}/{n_splits}...")
 
         # split into train and test sets
@@ -208,7 +214,8 @@ def preface_train(
         x_test, _ = impute_nan(x_test, impute)
 
         # reduce dimensionality with PCA for each split to prevent data leakage
-        split_pca = PCA(n_components=n_feat)
+        current_n_feat = min(n_feat, x_train.shape[0], x_train.shape[1])
+        split_pca = PCA(n_components=current_n_feat)
         x_train = split_pca.fit_transform(x_train)
         x_test = split_pca.transform(x_test)
 
@@ -268,12 +275,12 @@ def preface_train(
             # split number
             "split": split,
             # regression metrics
-            "ff_mae": mean_absolute_error(
-                y_test, predictions["regression_predictions"]
+            "mae": mean_absolute_error(
+                y_test, predictions
             ),
-            "ff_r2": r2_score(y_test, predictions["regression_predictions"]),
-            "ff_intercept": reg_perf["intercept"],
-            "ff_slope": reg_perf["slope"],
+            "r2": r2_score(y_test, predictions),
+            "intercept": reg_perf["intercept"],
+            "slope": reg_perf["slope"],
         }
         split_metrics.append(metrics)
 

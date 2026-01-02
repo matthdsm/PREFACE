@@ -2,6 +2,7 @@
 .Rhistory
 .R
 data/
+test_output/
 *.egg-info
 __pycache__/
 .gemini/
