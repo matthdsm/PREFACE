@@ -105,6 +105,7 @@ def neural_tune(
     )
     study.optimize(objective, n_trials=n_trials)
 
+    outdir.mkdir(parents=True, exist_ok=True)
     fig = optuna.visualization.plot_optimization_history(study)
     fig.write_image(outdir / "neural_tuning_history.png")
     return study.best_params

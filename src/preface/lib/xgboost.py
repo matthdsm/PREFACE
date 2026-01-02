@@ -106,6 +106,6 @@ def xgboost_export(model: XGBRegressor) -> onnx.ModelProto:
 
     initial_type = [("xgboost_input", FloatTensorType([None, model.n_features_in_]))]
     onnx_model = onnxmltools.convert_xgboost(
-        model, initial_types=initial_type, target_opset=18
+        model, initial_types=initial_type, target_opset=13
     )
     return onnx_model

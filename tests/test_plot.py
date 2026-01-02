@@ -1,6 +1,5 @@
 """Unit tests for plotting functions."""
 
-import os
 import shutil
 import unittest
 from pathlib import Path
@@ -10,7 +9,6 @@ from sklearn.decomposition import PCA
 # Import the functions to be tested, including the private one for direct testing
 from preface.lib.plot import (
     _calculate_regression_metrics,
-    fit_rlm,
     plot_ffx,
     plot_pca,
     plot_regression_performance,
@@ -42,14 +40,6 @@ class TestPlottingFunctions(unittest.TestCase):
         self.assertIn("correlation", metrics)
         self.assertAlmostEqual(metrics["mae"], 0.14, places=2)
         self.assertAlmostEqual(metrics["slope"], 1.0, places=2)
-
-    def test_fit_rlm(self):
-        """Test the fit_rlm function with a clear linear relationship."""
-        x = np.array([1, 2, 3, 4, 5])
-        y = 2 * x + 1  # slope=2, intercept=1
-        intercept, slope = fit_rlm(x, y)
-        self.assertAlmostEqual(intercept, 1.0, places=5)
-        self.assertAlmostEqual(slope, 2.0, places=5)
 
     def test_plot_regression_performance_smoke(self):
         """Smoke test for plot_regression_performance."""

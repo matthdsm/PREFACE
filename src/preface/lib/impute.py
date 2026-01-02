@@ -87,5 +87,5 @@ def impute_export(
 
     initial_type = [("impute_input", FloatTensorType([None, input_dim]))]
 
-    imputer_onnx = convert_sklearn(imputer, initial_types=initial_type, target_opset=18)
+    imputer_onnx = convert_sklearn(imputer, initial_types=initial_type, target_opset=13)
     return imputer_onnx  # type: ignore

@@ -12,8 +12,12 @@ from sklearn.svm import SVR
 from tensorflow.keras import Model  # type: ignore
 from xgboost import XGBRegressor
 
+from preface.lib.neural import neural_export
+from preface.lib.svm import svm_export
+from preface.lib.xgboost import xgboost_export
 
-def _ensure_opset(model_proto: onnx.ModelProto, version: int = 18) -> onnx.ModelProto:
+
+def _ensure_opset(model_proto: onnx.ModelProto, version: int = 13) -> onnx.ModelProto:
     """
     Force the default domain opset to a specific version.
     """
@@ -31,14 +35,14 @@ def pca_export(pca: PCA, input_dim: int) -> onnx.ModelProto:
     pca_onnx = convert_sklearn(
         pca,
         initial_types=pca_initial_type,
-        target_opset=18,
+        target_opset=13,
     )
-    _ensure_opset(pca_onnx, 18)  # type: ignore
+    _ensure_opset(pca_onnx, 13)  # type: ignore
 
     return pca_onnx  # type: ignore
 
 
-def export_ensemble(
+def ensemble_export(
     models: List[
         Tuple[
             SimpleImputer | KNNImputer | IterativeImputer,
@@ -66,18 +70,17 @@ def export_ensemble(
         # 1. Convert Imputer
         initial_type = [("input", FloatTensorType([None, input_dim]))]
         imputer_onnx = convert_sklearn(
-            imputer, initial_types=initial_type, target_opset={"": 12, "ai.onnx.ml": 2}
+            imputer, initial_types=initial_type, target_opset={"": 13, "ai.onnx.ml": 2}
         )
-        _ensure_opset(imputer_onnx, 12)  # type: ignore
+        _ensure_opset(imputer_onnx, 13)  # type: ignore
 
         # Prefix Imputer
         imputer_onnx = add_prefix(imputer_onnx, prefix="imputer_")  # type: ignore
         imputer_out_name = imputer_onnx.graph.output[0].name  # type: ignore
 
         # 2. Convert PCA
-        pca_onnx = pca_to_onnx(pca, input_dim)
+        pca_onnx = pca_export(pca, input_dim)
         pca_in_name = pca_onnx.graph.input[0].name  # type: ignore
-        pca_out_name = pca_onnx.graph.output[0].name  # type: ignore
 
         # Merge Imputer + PCA
         current_model = merge_models(
@@ -85,30 +88,19 @@ def export_ensemble(
             pca_onnx,  # type: ignore
             io_map=[(imputer_out_name, pca_in_name)],  # type: ignore
         )
-        current_out_name = pca_out_name
-        n_comps = pca.n_components_
 
         # 3. Convert Model
         model_type = "unknown"
         if isinstance(model, Model):
             model_type = "nn"
-            current_model, info = export_nn(
-                model, n_comps, current_model, current_out_name, i
-            )
-            split_info.extend(info)
+            current_model = neural_export(model)
 
         elif isinstance(model, SVR):
-            current_model, info = export_svm(
-                model, n_comps, current_model, current_out_name
-            )
-            split_info.extend(info)
+            current_model = svm_export(model)
 
         elif isinstance(model, XGBRegressor):
             model_type = "xgb"
-            current_model, info = export_xgb(
-                model, n_comps, current_model, current_out_name
-            )
-            split_info.extend(info)
+            current_model = xgboost_export(model)
 
         # Prefix everything in this split's graph
         prefixed_model = add_prefix(current_model, prefix=split_prefix)
