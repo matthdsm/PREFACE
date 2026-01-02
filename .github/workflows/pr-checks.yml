@@ -26,4 +26,4 @@ jobs:
         run: pixi run pytest --cov=src/preface --cov-report=xml
 
       - name: Verify Version and Changelog
-        run: pixi run python scripts/ci_checks.py
+        run: pixi run python .github/scripts/ci_checks.py
