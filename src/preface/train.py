@@ -16,13 +16,8 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import GroupShuffleSplit
 from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
-
-from preface.lib.functions import (
-    plot_regression_performance,
-    plot_pca,
-    plot_tsne,
-    preprocess_ratios,
-)
+from preface.lib.plot import plot_pca, plot_tsne, plot_regression_performance
+from preface.lib.functions import preprocess_ratios
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
 from preface.lib.svm import svm_tune, svm_fit
 from preface.lib.neural import neural_tune, neural_fit
@@ -102,8 +97,7 @@ def preface_train(
         )
         data_path = samplesheet_dir / Path(sample["filepath"])
         if (
-            not data_path.exists()
-            or not data_path.is_file()  # noqa: W503
+            not data_path.exists() or not data_path.is_file()  # noqa: W503
         ):
             logging.error(f"File '{data_path}' does not exist.")
             raise typer.Exit(code=1)
@@ -275,9 +269,7 @@ def preface_train(
             # split number
             "split": split,
             # regression metrics
-            "mae": mean_absolute_error(
-                y_test, predictions
-            ),
+            "mae": mean_absolute_error(y_test, predictions),
             "r2": r2_score(y_test, predictions),
             "intercept": reg_perf["intercept"],
             "slope": reg_perf["slope"],
