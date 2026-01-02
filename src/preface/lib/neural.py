@@ -2,7 +2,10 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+import onnx
 import optuna
+import tensorflow as tf
+import tf2onnx
 from sklearn.decomposition import PCA
 from sklearn.model_selection import GroupShuffleSplit
 from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
@@ -148,3 +151,12 @@ def neural_fit(
     )
 
     return model, model.predict(x_test)
+
+
+def neural_export(model: Model) -> onnx.ModelProto:
+    """Export neural network to ONNX format."""
+    input_signature = [tf.TensorSpec(model.input_shape, tf.float32, name="neural_input")]
+    onnx_model, _ = tf2onnx.convert.from_keras(
+        model, input_signature=input_signature, opset=13
+    )
+    return onnx_model
