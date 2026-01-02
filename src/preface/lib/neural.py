@@ -49,6 +49,7 @@ def neural_tune(
     n_components: int,
     outdir: Path,
     impute_option: ImputeOptions,
+    n_trials: int = 30,
 ) -> dict:
     def objective(trial) -> float:
         params = {
@@ -59,14 +60,6 @@ def neural_tune(
             "epochs": trial.suggest_int("epochs", 20, 100, step=10),
             "batch_size": trial.suggest_int("batch_size", 8, 64, step=8),
         }
-        model = create_model(
-            input_dim=x.shape[1],
-            n_layers=params["n_layers"],
-            hidden_size=params["hidden_size"],
-            learning_rate=params["learning_rate"],
-            dropout_rate=params["dropout_rate"],
-        )
-
         # Internal split for the tuner
         gss_internal = GroupShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
         scores = []
@@ -85,6 +78,14 @@ def neural_tune(
             x_train = pca.fit_transform(x_train)
             x_val = pca.transform(x_val)
 
+            model = create_model(
+                input_dim=current_n_components,
+                n_layers=params["n_layers"],
+                hidden_size=params["hidden_size"],
+                learning_rate=params["learning_rate"],
+                dropout_rate=params["dropout_rate"],
+            )
+
             history = model.fit(
                 x_train,
                 y_train,
@@ -102,7 +103,7 @@ def neural_tune(
     study = optuna.create_study(
         direction="minimize", pruner=optuna.pruners.MedianPruner()
     )
-    study.optimize(objective, n_trials=30)
+    study.optimize(objective, n_trials=n_trials)
 
     fig = optuna.visualization.plot_optimization_history(study)
     fig.write_image(outdir / "neural_tuning_history.png")
@@ -158,6 +159,6 @@ def neural_export(model: Model) -> onnx.ModelProto:
     """Export neural network to ONNX format."""
     initial_type = [("neural_input", FloatTensorType([None, model.input_shape[1]]))]
     onnx_model = onnxmltools.convert_keras(
-        model, initial_types=initial_type, target_opset=18
+        model, initial_types=initial_type, target_opset=13
     )
     return onnx_model

@@ -6,6 +6,7 @@ from preface.lib.impute import ImputeOptions, impute_nan
 from sklearn.svm import SVR
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.decomposition import PCA
+from sklearn.experimental import enable_iterative_imputer  # type: ignore # noqa
 import optuna
 import onnxmltools
 import onnx
@@ -19,6 +20,7 @@ def svm_tune(
     n_components: int,  # number of PCA components
     outdir: Path,  # output directory
     impute_option: ImputeOptions,  # imputation strategy
+    n_trials: int = 30,  # number of optimization trials
 ) -> dict:
     def objective(trial) -> float:
         params = {
@@ -56,7 +58,7 @@ def svm_tune(
     study = optuna.create_study(
         direction="minimize", pruner=optuna.pruners.MedianPruner()
     )
-    study.optimize(objective, n_trials=30)
+    study.optimize(objective, n_trials=n_trials)
 
     fig = optuna.visualization.plot_optimization_history(study)
     fig.write_image(outdir / "svm_tuning_history.png")
@@ -87,6 +89,6 @@ def svm_export(model: SVR) -> onnx.ModelProto:
     """Export SVM model to ONNX format."""
     initial_type = [("svm_input", FloatTensorType([None, model.n_features_in_]))]
     onnx_model = onnxmltools.convert_sklearn(
-        model, initial_types=initial_type, target_opset=18
+        model, initial_types=initial_type, target_opset=15
     )
     return onnx_model  # type: ignore
