@@ -19,7 +19,6 @@ from preface import __version__  # noqa: E402
 from preface.predict import preface_predict  # noqa: E402
 from preface.train import preface_train  # noqa: E402
 from preface.utils.ffy import wisecondorx_ffy  # noqa: E402
-from preface.utils.npz_to_parquet import npz_to_parquet  # noqa: E402
 
 # Configure logging
 logging.basicConfig(
@@ -40,7 +39,6 @@ app.command(name="version")(lambda: print(f"PREFACE version {VERSION}"))
 
 # Utilities group
 utils_app = typer.Typer(help="Utility scripts")
-utils_app.command(name="npz-to-parquet")(npz_to_parquet)
 utils_app.command(name="ffy")(wisecondorx_ffy)
 app.add_typer(utils_app, name="utils")
 

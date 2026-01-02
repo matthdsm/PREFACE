@@ -113,21 +113,6 @@ PREFACE version
 
 # Utilities
 
-## NPZ to Parquet Converter
-
-Converts NumPy `.npz` files into one or more Parquet files, facilitating easier exploration and analysis using tools like Pandas.
-
-### Usage
-
-```bash
-PREFACE utils npz-to-parquet <npz_file1> [<npz_file2> ...] [-o <output_directory>]
-```
-
-| Argument | Type | Default | Function |
-| :--- | :--- | :--- | :--- |
-| `npz_files` | ARGUMENT(S) | (Required) | One or more .npz files to convert. |
-| `--output-dir` | PATH | `.` | Directory to save the output Parquet files. |
-
 ## FFY Calculator
 
 Calculates Fetal Fraction from Y-chromosome reads (FFY) directly from WisecondorX output files.
