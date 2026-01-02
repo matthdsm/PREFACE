@@ -35,16 +35,26 @@ def preprocess_ratios(ratios_df: pd.DataFrame, exclude_chrs: list[str]) -> pd.Da
 
 def fit_rlm(x_values: npt.NDArray, y_values: npt.NDArray) -> tuple[float, float]:
     """
-    Fit robust linear model (RLM) and return intercept and slope.
-    """
+    Fit a Robust Linear Model (RLM) using Huber's T norm.
 
+    Args:
+        x_values: The independent variables.
+        y_values: The dependent variable.
+
+    Returns:
+        A tuple containing the intercept and slope of the fitted model.
+    """
+    # Add a constant to the independent variable array for intercept calculation
     x_rlm = sm.add_constant(x_values)
+
+    # Fit the RLM model
+    # M=sm.robust.norms.HuberT() specifies the robust norm to use for fitting,
+    # which is less sensitive to outliers than ordinary least squares.
     rlm_model = sm.RLM(y_values, x_rlm, M=sm.robust.norms.HuberT())
     rlm_results = rlm_model.fit()
-    fit_params = rlm_results.params
-    intercept: float = fit_params[0]
-    slope: float = fit_params[1]
-    return intercept, slope
+
+    intercept, slope = rlm_results.params
+    return float(intercept), float(slope)
 
 
 def pca_export(pca: PCA, input_dim: int) -> onnx.ModelProto:
