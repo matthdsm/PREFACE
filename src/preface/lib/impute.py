@@ -5,6 +5,9 @@ import numpy.typing as npt
 import sklearn
 from sklearn.experimental import enable_iterative_imputer  # pylint: disable=unused-import # noqa: F401  # type: ignore
 from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
+import onnx
+from skl2onnx import convert_sklearn
+from skl2onnx.common.data_types import FloatTensorType
 
 
 class ImputeOptions(Enum):
@@ -70,3 +73,19 @@ def impute_nan(
         imputed_values = imputer.fit_transform(values)
 
     return imputed_values, imputer
+
+
+def impute_export(
+    imputer: SimpleImputer | KNNImputer | IterativeImputer,
+    input_dim: int,
+) -> onnx.ModelProto:
+    """Export imputer to ONNX format."""
+    if isinstance(imputer, IterativeImputer):
+        raise NotImplementedError(
+            "IterativeImputer (MICE) is not supported for ONNX export."
+        )
+
+    initial_type = [("impute_input", FloatTensorType([None, input_dim]))]
+
+    imputer_onnx = convert_sklearn(imputer, initial_types=initial_type, target_opset=18)
+    return imputer_onnx  # type: ignore

@@ -156,5 +156,7 @@ def neural_fit(
 def neural_export(model: Model) -> onnx.ModelProto:
     """Export neural network to ONNX format."""
     initial_type = [("neural_input", FloatTensorType([None, model.input_shape[1]]))]
-    onnx_model = onnxmltools.convert_keras(model, initial_types=initial_type, target_opset=12)
+    onnx_model = onnxmltools.convert_keras(
+        model, initial_types=initial_type, target_opset=18
+    )
     return onnx_model

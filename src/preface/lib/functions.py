@@ -3,8 +3,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
+import onnx
 import pandas as pd
 import statsmodels.api as sm
+from skl2onnx import convert_sklearn
+from skl2onnx.common.data_types import FloatTensorType
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.manifold import TSNE
@@ -343,3 +346,10 @@ def plot_tsne(
     plt.tight_layout()
     plt.savefig(output, dpi=300)
     plt.close()
+
+
+def pca_export(pca: PCA, input_dim: int) -> onnx.ModelProto:
+    """Export PCA model to ONNX format."""
+    initial_type = [("input", FloatTensorType([None, input_dim]))]
+    pca_onnx = convert_sklearn(pca, initial_types=initial_type, target_opset=18)
+    return pca_onnx  # type: ignore

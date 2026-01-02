@@ -86,6 +86,6 @@ def svm_export(model: SVR) -> onnx.ModelProto:
     """Export SVM model to ONNX format."""
     initial_type = [("svm_input", FloatTensorType([None, model.n_features_in_]))]
     onnx_model = onnxmltools.convert_sklearn(
-        model, initial_types=initial_type, target_opset=12
+        model, initial_types=initial_type, target_opset=18
     )
     return onnx_model  # type: ignore
