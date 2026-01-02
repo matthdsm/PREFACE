@@ -52,7 +52,8 @@ def xgboost_tune(
             x_val, _ = impute_nan(x_val, impute_option)
 
             # Reduce dimensionality with PCA
-            pca = PCA(n_components=n_components)
+            current_n_components = min(n_components, x_train.shape[0], x_train.shape[1])
+            pca = PCA(n_components=current_n_components)
             x_train = pca.fit_transform(x_train)
             x_val = pca.transform(x_val)
 

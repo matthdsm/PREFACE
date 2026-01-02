@@ -27,7 +27,6 @@ from preface.lib.xgboost import xgboost_tune, xgboost_fit
 from preface.lib.svm import svm_tune, svm_fit
 from preface.lib.neural import neural_tune, neural_fit
 from preface.lib.impute import ImputeOptions, impute_nan
-from preface.lib.ensemble import build_ensemble
 
 # Constants
 EXCLUDE_CHRS: list[str] = ["13", "18", "21", "X", "Y"]
@@ -283,13 +282,13 @@ def preface_train(
     split_metrics_df.to_csv(out_dir / "training_split_metrics.csv", index=False)
 
     # Build ensemble model from split models
-    logging.info("Building ensemble model from split models...")
-    build_ensemble(
-        split_models,
-        x.shape[1],
-        out_dir / "PREFACE.onnx",
-        metadata={"exclude_chrs": ",".join(exclude_chrs)},
-    )
+    # logging.info("Building ensemble model from split models...")
+    # build_ensemble(
+    #     split_models,
+    #     x.shape[1],
+    #     out_dir / "PREFACE.onnx",
+    #     metadata={"exclude_chrs": ",".join(exclude_chrs)},
+    # )
 
     # Final evaluation on all training data
     logging.info("Evaluating final model on all training data...")

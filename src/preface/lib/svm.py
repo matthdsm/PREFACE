@@ -41,11 +41,12 @@ def svm_tune(
             x_val, _ = impute_nan(x_val, impute_option)
 
             # reduce dimensionality with PCA
-            pca = PCA(n_components=n_components)
+            current_n_components = min(n_components, x_train.shape[0], x_train.shape[1])
+            pca = PCA(n_components=current_n_components)
             x_train = pca.fit_transform(x_train)
             x_val = pca.transform(x_val)
 
-            model.fit(x_train, y_train)
+            model.fit(x_train, y_train.ravel())
             preds = model.predict(x_val)
 
         scores.append(mean_squared_error(y_val, preds))
