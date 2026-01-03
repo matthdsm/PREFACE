@@ -18,9 +18,16 @@ def wisecondorx_ffy(
     sex_cutoff: float = typer.Option(
         0.2, "--sex-cutoff", help="Cutoff for sex determination"
     ),
+    slope: float = typer.Option(
+        1.0, "--slope", help="Slope for FFY calculation (Y = slope * FF + intercept)"
+    ),
+    intercept: float = typer.Option(
+        0.0, "--intercept", help="Intercept for FFY calculation"
+    ),
 ) -> dict:
     """
     Calculate fetal fraction from Y chromosome (FFY) using WisecondorX output.
+    FFY is calculated as: (Y_fraction - intercept) / slope
     """
     npz = np.load(wisecondorx_npz, encoding="latin1", allow_pickle=True)
     read_counts = npz["sample"].item()
@@ -32,12 +39,18 @@ def wisecondorx_ffy(
     )
     y_chr_fraction = np.array(read_counts["24"], dtype="float") / read_depth
 
-    ffy_val = np.sum(y_chr_fraction)
+    y_frac_total = np.sum(y_chr_fraction)
+
+    # Calculate FFY using linear regression formula
+    if slope == 0:
+        ffy_val = 0.0 # Avoid division by zero
+    else:
+        ffy_val = (y_frac_total - intercept) / slope
 
     sex = "unknown"
-    if ffy_val > sex_cutoff:
+    if y_frac_total > sex_cutoff:  # Sex determination usually based on raw Y fraction
         sex = "male"
     else:
         sex = "female"
 
-    return {"FFY": ffy_val, "sex": sex}
+    return {"FFY": ffy_val, "sex": sex, "Y_fraction": y_frac_total}

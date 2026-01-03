@@ -65,6 +65,67 @@ The training pipeline is a robust, multi-step process designed to build a genera
 6.  **Hyperparameter Tuning (Optional)**: If you add the `--tune` flag, PREFACE will first run an optimization process using Optuna to find the best hyperparameters for the chosen model architecture on your specific dataset.
 7.  **Ensemble Creation**: Instead of relying on a single model, PREFACE builds an ensemble from all the models trained during the cross-validation splits. This technique typically results in a more robust and accurate final model. The ensemble, including the complete preprocessing pipeline (imputation and PCA), is saved as a single `PREFACE.onnx` file.
 
+### Ensemble Topology
+
+This diagram illustrates the structure of the PREFACE ensemble model, including data processing, cross-validation splits, and model options.
+
+```mermaid
+graph TD
+    Input[Data Input: Genomic Ratios] --> Preprocess[Preprocess: Exclude Chromosomes]
+    Preprocess --> GlobalSplit{Split Data}
+    
+    subgraph "Cross-Validation Ensemble (n_splits)"
+        direction TB
+        GlobalSplit -->|Split 1| Split1
+        GlobalSplit -->|...| SplitDot[...]
+        GlobalSplit -->|Split n| SplitN
+        
+        subgraph Split1 [Split i Pipeline]
+            direction TB
+            S1_Input[Train/Test Data] --> Impute{Imputation Strategy}
+            
+            Impute -->|Simple| ImpZero[Zero / Constant]
+            Impute -->|Simple| ImpMean[Mean]
+            Impute -->|Simple| ImpMedian[Median]
+            Impute -->|Sklearn| ImpKNN[K-Nearest Neighbors]
+            Impute -->|Experimental| ImpMICE[MICE / Iterative]
+            
+            ImpZero --> PCA[PCA: Dimensionality Reduction]
+            ImpMean --> PCA
+            ImpMedian --> PCA
+            ImpKNN --> PCA
+            ImpMICE --> PCA
+            
+            PCA --> ModelSelect{Model Selection}
+            
+            ModelSelect --> ModNN[Neural Network]
+            ModelSelect --> ModXGB[XGBoost Regressor]
+            ModelSelect --> ModSVM[Support Vector Machine]
+            
+            ModNN --> Output1[Regression Output]
+            ModXGB --> Output1
+            ModSVM --> Output1
+        end
+    end
+
+    Split1 -->|Output| Aggregator[Aggregator: Mean]
+    SplitDot -->|Output| Aggregator
+    SplitN -->|Output| Aggregator
+    
+    Aggregator --> FinalResult[Final Prediction: Fetal Fraction]
+
+    %% Styling
+    classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    classDef decision fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
+    classDef model fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    classDef output fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    
+    class Input,Preprocess,PCA,Aggregator process;
+    class Impute,ModelSelect,GlobalSplit decision;
+    class ImpZero,ImpMean,ImpMedian,ImpKNN,ImpMICE,ModNN,ModXGB,ModSVM model;
+    class FinalResult,Output1 output;
+```
+
 ### Options
 
 | Argument | Type | Default | Function |
@@ -120,10 +181,16 @@ Calculates Fetal Fraction from Y-chromosome reads (FFY) directly from Wisecondor
 ### Usage
 
 ```bash
-PREFACE utils ffy <wisecondorx_npz> [--sex-cutoff <cutoff>]
+PREFACE utils ffy <wisecondorx_npz> [--sex-cutoff <cutoff>] [--slope <slope>] [--intercept <intercept>]
 ```
 
 | Argument | Type | Default | Function |
 | :--- | :--- | :--- | :--- |
 | `wisecondorx_npz`| ARGUMENT | (Required) | Path to WisecondorX output NPZ file. |
-| `--sex-cutoff` | FLOAT | `0.2` | Cutoff for sex determination. |
+| `--sex-cutoff` | FLOAT | `0.2` | Cutoff for sex determination based on raw Y fraction. |
+| `--slope` | FLOAT | `1.0` | Slope (m) for FFY calculation. |
+| `--intercept` | FLOAT | `0.0` | Intercept (b) for FFY calculation. |
+
+The Fetal Fraction (FFY) is calculated using the linear equation:
+$$FFY = \frac{Y_{fraction} - \text{Intercept}}{\text{Slope}}$$
+where $Y_{fraction}$ is the ratio of Y-mapped reads to total reads. The default values (m=1.0, b=0.0) return the raw Y fraction; adjust these based on your lab's calibration (e.g., from regression analysis of male samples).
