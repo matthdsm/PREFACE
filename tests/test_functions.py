@@ -25,7 +25,7 @@ class TestPcaExport(unittest.TestCase):
         # Check graph properties
         self.assertGreater(len(onnx_model.graph.node), 0)
         self.assertEqual(len(onnx_model.graph.input), 1)
-        self.assertEqual(onnx_model.graph.input[0].name, "input")
+        self.assertEqual(onnx_model.graph.input[0].name, "pca_input")
         self.assertEqual(len(onnx_model.graph.output), 1)
 
         # Validate the model

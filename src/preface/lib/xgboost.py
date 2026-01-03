@@ -120,15 +120,16 @@ def xgboost_export(model: XGBRegressor) -> onnx.ModelProto:
                 # If it's an array/list, take the first element for single output regression
                 model.base_score = float(model.base_score)
             except (TypeError, ValueError):
-                 # Try taking first element of array-like
-                 try:
-                    model.base_score = float(model.base_score[0]) # type: ignore
-                 except:
+                # Try taking first element of array-like
+                try:
+                    model.base_score = float(model.base_score[0])  # type: ignore
+                except:
                     pass
 
-
     with may_switch_bases_classes_order(XGBRegressor):
-        initial_type = [("xgboost_input", FloatTensorType([None, model.n_features_in_]))]
+        initial_type = [
+            ("xgboost_input", FloatTensorType([None, model.n_features_in_]))
+        ]
         onnx_model = to_onnx(model, initial_types=initial_type, target_opset=18)
 
     return onnx_model

@@ -16,12 +16,18 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import GroupShuffleSplit
 from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
-from preface.lib.plot import plot_pca, plot_tsne, plot_regression_performance, plot_cv_splits
-from preface.lib.functions import preprocess_ratios
+from preface.lib.plot import (
+    plot_pca,
+    plot_tsne,
+    plot_regression_performance,
+    plot_cv_splits,
+)
+from preface.lib.functions import preprocess_ratios, ensemble_export
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
 from preface.lib.svm import svm_tune, svm_fit
 from preface.lib.neural import neural_tune, neural_fit
 from preface.lib.impute import ImputeOptions, impute_nan
+
 
 # Constants
 EXCLUDE_CHRS: list[str] = ["13", "18", "21", "X", "Y"]
@@ -292,12 +298,12 @@ def preface_train(
 
     # Build ensemble model from split models
     logging.info("Building ensemble model from split models...")
-    # build_ensemble(
-    #     split_models,
-    #     x.shape[1],
-    #     out_dir / "PREFACE.onnx",
-    #     metadata={"exclude_chrs": ",".join(exclude_chrs)},
-    # )
+    ensemble_export(
+        split_models,
+        x.shape[1],
+        out_dir / "PREFACE.onnx",
+        metadata={"exclude_chrs": ",".join(exclude_chrs)},
+    )
 
     # Final evaluation on all training data
     logging.info("Evaluating final model on all training data...")

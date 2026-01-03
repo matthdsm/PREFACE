@@ -1,4 +1,3 @@
-
 import unittest
 import shutil
 import numpy as np
@@ -14,7 +13,7 @@ class TestXGBoost(unittest.TestCase):
     def setUp(self):
         self.test_dir = Path("test_xgboost_outputs")
         self.test_dir.mkdir(exist_ok=True)
-        
+
         # Create dummy data
         self.n_samples = 50
         self.n_features = 5
@@ -28,7 +27,7 @@ class TestXGBoost(unittest.TestCase):
 
     def test_xgboost_fit(self):
         params = {"n_estimators": 10, "max_depth": 2}
-        
+
         # Split data
         x_train, x_test = self.x[:40], self.x[40:]
         y_train, y_test = self.y[:40], self.y[40:]
@@ -48,7 +47,7 @@ class TestXGBoost(unittest.TestCase):
             "max_depth": 3,
             "learning_rate": 0.05,
             "subsample": 0.8,
-            "colsample_bytree": 0.8
+            "colsample_bytree": 0.8,
         }
         mock_optuna.create_study.return_value = mock_study
 
@@ -59,12 +58,13 @@ class TestXGBoost(unittest.TestCase):
             self.groups,
             n_components=3,
             outdir=self.test_dir,
-            impute_option=ImputeOptions.ZERO
+            impute_option=ImputeOptions.ZERO,
         )
 
         self.assertEqual(best_params, mock_study.best_params)
         mock_optuna.create_study.assert_called_once()
         mock_study.optimize.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

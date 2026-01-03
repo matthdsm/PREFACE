@@ -362,4 +362,3 @@ def plot_cv_splits(
     plt.tight_layout()
     plt.savefig(output, dpi=300)
     plt.close()
-
