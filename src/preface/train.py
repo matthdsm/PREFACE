@@ -281,7 +281,7 @@ def preface_train(
     split_metrics_df.to_csv(out_dir / "training_split_metrics.csv", index=False)
 
     # Build ensemble model from split models
-    # logging.info("Building ensemble model from split models...")
+    logging.info("Building ensemble model from split models...")
     # build_ensemble(
     #     split_models,
     #     x.shape[1],
@@ -295,9 +295,7 @@ def preface_train(
     # Load ONNX model
     sess = ort.InferenceSession(out_dir / "PREFACE.onnx")
     input_name = sess.get_inputs()[0].name
-    x_all_eval = x.astype(np.float32)
-
-    predictions = sess.run(None, {input_name: x_all_eval})
+    predictions = sess.run(None, {input_name: x.astype(np.float32)})
 
     # Use first split's PCA for visualization
     first_pca = split_models[0][1]
