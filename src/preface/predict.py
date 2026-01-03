@@ -61,7 +61,6 @@ def preface_predict(
     # If unknown model, fallback to index.
 
     ff_score = None
-    sex_prob = None
 
     result_map = dict(zip(output_names, results))
 
@@ -70,13 +69,5 @@ def preface_predict(
     elif len(results) > 0:
         ff_score = results[0][0][0]
 
-    if "final_sex_prob" in result_map:
-        sex_prob = result_map["final_sex_prob"][0][0]
-    elif len(results) > 1:
-        sex_prob = results[1][0][0]
-
-    sex_class = "Male" if sex_prob > 0.5 else "Female"
-
     print("--- Patient Report ---")
     print(f"Predicted FF Score: {ff_score:.4f}")
-    print(f"Sex Probability:    {sex_prob:.4f} ({sex_class})")

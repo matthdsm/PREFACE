@@ -6,6 +6,7 @@ from onnx import TensorProto, helper
 from onnx.compose import add_prefix, merge_models
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
+from sklearn.experimental import enable_iterative_imputer  # noqa
 from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
 from sklearn.decomposition import PCA
 from sklearn.svm import SVR
@@ -83,27 +84,75 @@ def ensemble_export(
         pca_in_name = pca_onnx.graph.input[0].name  # type: ignore
 
         # Merge Imputer + PCA
-        current_model = merge_models(
+        current_model_imp_pca = merge_models(
             imputer_onnx,  # type: ignore
             pca_onnx,  # type: ignore
             io_map=[(imputer_out_name, pca_in_name)],  # type: ignore
         )
 
         # 3. Convert Model
-        model_type = "unknown"
         if isinstance(model, Model):
             model_type = "nn"
             current_model = neural_export(model)
 
         elif isinstance(model, SVR):
+            model_type = "svm"
             current_model = svm_export(model)
 
         elif isinstance(model, XGBRegressor):
             model_type = "xgb"
             current_model = xgboost_export(model)
+        
+        # Ensure opset matches
+        _ensure_opset(current_model, 19)
+
+
+        # Merge (Imputer + PCA) with Model
+        # output of PCA is the input to the Model
+        # We need to find the output name of the current (Imputer+PCA) model
+        # which is essentially the output of the PCA part.
+        
+        # current_model_imp_pca has outputs.
+        # current_model has inputs.
+        
+        pca_out_name = current_model_imp_pca.graph.output[0].name
+        model_in_name = current_model.graph.input[0].name
+        
+        # To avoid name collisions between PCA internal nodes and Model internal nodes
+        # (e.g. "variable" is common), we should prefix the Model before merging.
+        # But we need to know the new input name after prefixing.
+        
+        model_prefix = "model_"
+        current_model_prefixed = add_prefix(current_model, prefix=model_prefix)
+        model_in_name_prefixed = model_prefix + model_in_name
+        
+        combined_split_model = merge_models(
+            current_model_imp_pca,
+            current_model_prefixed,
+            io_map=[(pca_out_name, model_in_name_prefixed)]
+        )
+
+        # Collect split info for averaging later
+        # We need to know the output names of the model part
+        # Neural, XGB, SVM have different output structures.
+        if model_type == "nn":
+            # Neural has "reg_output" theoretically.
+            # We assume the output we want is the first one or named specifically.
+            # But let's trust the graph output 0 is what we want for regression.
+            reg_base = model_prefix + current_model.graph.output[0].name
+
+        elif model_type == "xgb":
+            # XGBoost: output[0] is prediction
+            reg_base = model_prefix + current_model.graph.output[0].name
+
+        elif model_type == "svm":
+             # SVM: output[0] is prediction
+            reg_base = model_prefix + current_model.graph.output[0].name
+
+        split_info.append(reg_base)
 
         # Prefix everything in this split's graph
-        prefixed_model = add_prefix(current_model, prefix=split_prefix)
+        prefixed_model = add_prefix(combined_split_model, prefix=split_prefix)
         prefixed_models.append(prefixed_model)
 
     # --- Merge All splits ---
@@ -122,7 +171,6 @@ def ensemble_export(
     graph = combined_model.graph
 
     # Find all inputs that look like "split_X_imputer_input"
-    # Because we added "imputer_" prefix inside the loop, and then "split_i_" prefix outside.
     # The input name structure is likely "split_i_imputer_input"
 
     # We need to find the specific input names created by add_prefix
@@ -157,59 +205,14 @@ def ensemble_export(
 
     # --- Average Outputs ---
     reg_names = []
-    class_names = []
 
     # Helper to find output names
-    for i, (model_type, reg_base, class_base) in enumerate(split_info):
+    for i, reg_base in enumerate(split_info):
         prefix = f"split_{i}_"
-
-        if model_type == "nn":
-            reg_names.append(prefix + reg_base)
-            if class_base:
-                class_names.append(prefix + class_base)
-
-        elif model_type == "xgb":
-            # XGBoost output [Batch, 2] -> Col 0: Reg, Col 1: Class (Prob)
-            xgb_out = prefix + reg_base
-            split_reg = f"{prefix}reg_split"
-            split_class = f"{prefix}class_split"
-
-            split_node = helper.make_node(
-                "Split",
-                inputs=[xgb_out],
-                outputs=[split_reg, split_class],
-                name=f"{prefix}Split",
-                axis=1,
-                split=[1, 1],
-            )
-            graph.node.append(split_node)
-
-            reg_names.append(split_reg)
-            class_names.append(split_class)
-
-        elif model_type == "svm":
-            reg_names.append(prefix + reg_base)
-
-            # SVC prob output [Batch, 2] -> want col 1
-            svm_class_prob_out = prefix + class_base
-            svm_class_split = f"{prefix}class_prob_split"
-            svm_class_0_dummy = f"{prefix}class_prob_0_dummy"
-
-            split_node_svm = helper.make_node(
-                "Split",
-                inputs=[svm_class_prob_out],
-                outputs=[svm_class_0_dummy, svm_class_split],
-                name=f"{prefix}SVMSplit",
-                axis=1,
-                split=[1, 1],
-            )
-            graph.node.append(split_node_svm)
-
-            class_names.append(svm_class_split)
+        reg_names.append(prefix + reg_base)
 
     # Add Mean nodes
     final_reg_name = "final_ff_score"
-    final_class_name = "final_sex_prob"
 
     # Check if we have outputs to average
     if reg_names:
@@ -217,12 +220,6 @@ def ensemble_export(
             "Mean", inputs=reg_names, outputs=[final_reg_name], name="Mean_FF"
         )
         graph.node.append(mean_reg_node)
-
-    if class_names:
-        mean_class_node = helper.make_node(
-            "Mean", inputs=class_names, outputs=[final_class_name], name="Mean_Sex"
-        )
-        graph.node.append(mean_class_node)
 
     # Clean outputs
     while len(graph.output) > 0:
@@ -232,12 +229,6 @@ def ensemble_export(
     if reg_names:
         new_outputs.append(
             helper.make_tensor_value_info(final_reg_name, TensorProto.FLOAT, [None, 1])
-        )
-    if class_names:
-        new_outputs.append(
-            helper.make_tensor_value_info(
-                final_class_name, TensorProto.FLOAT, [None, 1]
-            )
         )
 
     graph.output.extend(new_outputs)
