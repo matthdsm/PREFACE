@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -346,6 +347,15 @@ def plot_cv_splits(
             vmin=-0.2,
             vmax=1.2,
         )
+
+    # ADD Legend
+    cmap = plt.cm.coolwarm
+    norm = plt.Normalize(vmin=-0.2, vmax=1.2)
+    legend_elements = [
+        mpatches.Patch(color=cmap(norm(0)), label="Training"),
+        mpatches.Patch(color=cmap(norm(1)), label="Testing"),
+    ]
+    ax.legend(handles=legend_elements, loc="center left", bbox_to_anchor=(1, 0.5))
 
     # Correctly format the plot
     n_splits = cv.get_n_splits(X, y, groups)
