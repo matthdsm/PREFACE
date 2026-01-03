@@ -13,7 +13,9 @@ from preface.lib.plot import (
     plot_pca,
     plot_regression_performance,
     plot_tsne,
+    plot_cv_splits,
 )
+from sklearn.model_selection import GroupShuffleSplit
 
 
 class TestPlottingFunctions(unittest.TestCase):
@@ -96,6 +98,17 @@ class TestPlottingFunctions(unittest.TestCase):
 
         # Test without labels
         plot_tsne(data, output_path, perplexity=10)
+        self.assertTrue(output_path.exists())
+
+    def test_plot_cv_splits_smoke(self):
+        """Smoke test for plot_cv_splits."""
+        X = np.random.rand(20, 2)
+        y = np.random.rand(20)
+        groups = np.array([0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4])
+        cv = GroupShuffleSplit(n_splits=2, test_size=0.2, random_state=42)
+        output_path = self.test_dir / "cv_splits.png"
+
+        plot_cv_splits(cv, X, y, groups, output_path)
         self.assertTrue(output_path.exists())
 
 

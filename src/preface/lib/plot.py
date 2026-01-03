@@ -17,6 +17,7 @@ __all__ = [
     "plot_ffx",
     "plot_pca",
     "plot_tsne",
+    "plot_cv_splits",
 ]
 
 
@@ -313,3 +314,52 @@ def plot_tsne(
     plt.tight_layout()
     plt.savefig(output, dpi=300)
     plt.close()
+
+
+def plot_cv_splits(
+    cv: object,
+    X: npt.NDArray,
+    y: npt.NDArray,
+    groups: npt.NDArray,
+    output: Path,
+    lw: int = 10,
+) -> None:
+    """Plot the indices of a cross-validation object."""
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    # Generate the training/testing visualizations for each CV split
+    # group_shuffle_split.split returns (train, test) indices
+    for ii, (tr, tt) in enumerate(cv.split(X=X, y=y, groups=groups)):
+        # Fill in indices with the training set groups
+        indices = np.array([np.nan] * len(X))
+        indices[tt] = 1
+        indices[tr] = 0
+
+        # Visualize the results
+        ax.scatter(
+            range(len(indices)),
+            [ii + 0.5] * len(indices),
+            c=indices,
+            marker="_",
+            lw=lw,
+            cmap=plt.cm.coolwarm,  # type: ignore
+            vmin=-0.2,
+            vmax=1.2,
+        )
+
+    # Correctly format the plot
+    n_splits = cv.get_n_splits(X, y, groups)
+    yticklabels = list(range(n_splits))
+    ax.set(
+        yticks=np.arange(len(yticklabels)) + 0.5,
+        yticklabels=yticklabels,
+        xlabel="Sample index",
+        ylabel="CV iteration",
+        ylim=[len(yticklabels) + 0.2, -0.2],
+        xlim=[0, len(X)],
+    )
+    ax.set_title(type(cv).__name__)
+    plt.tight_layout()
+    plt.savefig(output, dpi=300)
+    plt.close()
+

@@ -16,7 +16,7 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import GroupShuffleSplit
 from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
-from preface.lib.plot import plot_pca, plot_tsne, plot_regression_performance
+from preface.lib.plot import plot_pca, plot_tsne, plot_regression_performance, plot_cv_splits
 from preface.lib.functions import preprocess_ratios
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
 from preface.lib.svm import svm_tune, svm_fit
@@ -196,6 +196,16 @@ def preface_train(
     gss: GroupShuffleSplit = GroupShuffleSplit(
         n_splits=n_splits, test_size=0.2, random_state=42
     )
+
+    # Visualize CV splits
+    plot_cv_splits(
+        cv=gss,
+        X=x,
+        y=y,
+        groups=groups,
+        output=out_dir / "cv_splits.png",
+    )
+
     for split, (train_idx, test_idx) in enumerate(gss.split(x, y, groups)):
         logging.info(f"Processing split {split}/{n_splits}...")
 
