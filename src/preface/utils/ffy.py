@@ -43,7 +43,7 @@ def wisecondorx_ffy(
 
     # Calculate FFY using linear regression formula
     if slope == 0:
-        ffy_val = 0.0 # Avoid division by zero
+        ffy_val = 0.0  # Avoid division by zero
     else:
         ffy_val = (y_frac_total - intercept) / slope
 

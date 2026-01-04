@@ -13,6 +13,8 @@ from skl2onnx.common.shape_calculator import calculate_linear_regressor_output_s
 from skl2onnx.convert import may_switch_bases_classes_order
 from onnxmltools.convert.xgboost.operator_converters.XGBoost import convert_xgboost
 from preface.lib.impute import impute_nan, ImputeOptions
+import json
+import ast
 
 
 def xgboost_tune(
@@ -127,9 +129,46 @@ def xgboost_export(model: XGBRegressor) -> onnx.ModelProto:
                     pass
 
     with may_switch_bases_classes_order(XGBRegressor):
+        # Patch save_config to handle list-string base_score
+        booster = model.get_booster()
+        original_save_config = booster.save_config
+
+        def patched_save_config():
+            json_str = original_save_config()
+            try:
+                config = json.loads(json_str)
+                if "learner" in config and "learner_model_param" in config["learner"]:
+                    param = config["learner"]["learner_model_param"]
+                    if "base_score" in param:
+                        val = param["base_score"]
+                        if (
+                            isinstance(val, str)
+                            and val.startswith("[")
+                            and val.endswith("]")
+                        ):
+                            # Parse list string, e.g. "[5.00000e-01]"
+                            try:
+                                parsed = ast.literal_eval(val)
+                                if isinstance(parsed, list) and len(parsed) > 0:
+                                    # Replace with scalar string
+                                    param["base_score"] = str(parsed[0])
+                            except:
+                                pass
+                return json.dumps(config)
+            except:
+                return json_str
+
+        # Apply patch
+        booster.save_config = patched_save_config
+
         initial_type = [
             ("xgboost_input", FloatTensorType([None, model.n_features_in_]))
         ]
-        onnx_model = to_onnx(model, initial_types=initial_type, target_opset=18)
+        onnx_model = to_onnx(
+            model, initial_types=initial_type, target_opset={"": 18, "ai.onnx.ml": 3}
+        )
+
+        # Revert patch (though booster is likely temporary/internal)
+        booster.save_config = original_save_config
 
     return onnx_model

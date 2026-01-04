@@ -8,9 +8,9 @@ from sklearn.model_selection import GroupShuffleSplit
 from sklearn.decomposition import PCA
 from sklearn.experimental import enable_iterative_imputer  # type: ignore # noqa
 import optuna
-import onnxmltools
 import onnx
 from skl2onnx.common.data_types import FloatTensorType
+from skl2onnx import to_onnx
 
 
 def svm_tune(
@@ -87,8 +87,38 @@ def svm_fit(
 
 def svm_export(model: SVR) -> onnx.ModelProto:
     """Export SVM model to ONNX format."""
+
+    # Workaround for SVR with 0 support vectors (causes skl2onnx crash)
+    if hasattr(model, "n_support_"):
+        # Sum of support vectors (checking attributes robustly)
+        n_supports = (
+            np.sum(model.n_support_)
+            if isinstance(model.n_support_, (list, np.ndarray))
+            else model.n_support_
+        )
+
+        if n_supports == 0:
+            # Injecting a dummy support vector with 0 coefficient
+            # This allows export but contributes 0 to prediction
+            n_features = model.n_features_in_
+
+            # Create dummy attributes if they are empty
+            # These ARE required for skl2onnx to populate coefficients/vectors attributes
+            model.support_vectors_ = np.zeros((1, n_features), dtype=np.float32)
+            model.dual_coef_ = np.zeros((1, 1), dtype=np.float32)
+
+            # Note: We cannot reliably set model.n_support_ as it is often read-only/hidden.
+            # skl2onnx might ignore our attempts to set it, resulting in n_supports=0 in ONNX.
+            # We will patch the ONNX graph directly below.
+
     initial_type = [("svm_input", FloatTensorType([None, model.n_features_in_]))]
-    onnx_model = onnxmltools.convert_sklearn(
-        model, initial_types=initial_type, target_opset=18
-    )
+    onnx_model = to_onnx(model, initial_types=initial_type, target_opset=18)
+
+    # Post-processing: Fix n_supports if it was exported as 0 due to workaround
+    if n_supports == 0:
+        for node in onnx_model.graph.node:
+            if node.op_type == "SVMRegressor":
+                for attr in node.attribute:
+                    if attr.name == "n_supports" and attr.i == 0:
+                        attr.i = 1
     return onnx_model  # type: ignore

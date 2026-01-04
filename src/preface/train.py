@@ -328,11 +328,11 @@ def preface_train(
 
     with open(out_dir / "training_statistics.txt", "w", encoding="utf-8") as f:
         f.write(
-            f"""PREFACE - PREdict FetAl ComponEnt
-            Training time: {time.time() - start_time:.0f} seconds
-            Overall correlation (r): {info_overall["correlation"]:.4f}
-            Overall mean absolute error (MAE): {info_overall["mae"]:.4f} ± {info_overall["sd_diff"]:.4f}
-            """
+f"""PREFACE - PREdict FetAl ComponEnt
+Training time: {time.time() - start_time:.0f} seconds
+Overall correlation (r): {info_overall["correlation"]:.4f}
+Overall mean absolute error (MAE): {info_overall["mae"]:.4f} ± {info_overall["sd_diff"]:.4f}
+"""
         )
 
     logging.info(

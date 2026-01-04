@@ -74,13 +74,21 @@ def fit_rlm(x_values: npt.NDArray, y_values: npt.NDArray) -> tuple[float, float]
     return float(intercept), float(slope)
 
 
-def _ensure_opset(model_proto: onnx.ModelProto, version: int = 19) -> onnx.ModelProto:
+def _ensure_opset(
+    model_proto: onnx.ModelProto, version: int = 19, ml_version: int = 3
+) -> onnx.ModelProto:
     """
     Force the default domain opset to a specific version.
+    Also force "ai.onnx.ml" to specific version (default 3) to prevent mismatches.
     """
     for op in model_proto.opset_import:
-        if (not op.domain or op.domain == "ai.onnx") and op.version < version:
+        if (not op.domain or op.domain == "ai.onnx") and op.version != version:
             op.version = version
+        if op.domain == "ai.onnx.ml" and op.version != ml_version:
+            op.version = ml_version
+
+    # Check if ai.onnx.ml is missing but we are forcing it? No, only if present.
+    # But checking if we need to add it is complex, simpler to just normalize existing ones.
     return model_proto
 
 
@@ -94,125 +102,53 @@ def pca_export(pca: PCA, input_dim: int) -> onnx.ModelProto:
         initial_types=pca_initial_type,
         target_opset=18,
     )
-    _ensure_opset(pca_onnx, 19)  # type: ignore
+    _ensure_opset(pca_onnx, 18)  # type: ignore
 
     return pca_onnx  # type: ignore
 
 
-def ensemble_export(
-    models: List[
-        Tuple[
-            SimpleImputer | KNNImputer | IterativeImputer,
-            PCA,
-            Model | XGBRegressor | SVR,
-        ]
-    ],
+def _export_processing_pipeline(
+    imputer: SimpleImputer | KNNImputer | IterativeImputer,
+    pca: PCA,
+    input_dim: int,
+) -> Tuple[onnx.ModelProto, str]:
+    """
+    Exports the Imputer -> PCA pipeline to ONNX.
+    Returns the merged model and its output name.
+    """
+    # 1. Convert Imputer
+    initial_type = [("input", FloatTensorType([None, input_dim]))]
+    imputer_onnx = convert_sklearn(imputer, initial_types=initial_type, target_opset=18)
+    _ensure_opset(imputer_onnx, 18, ml_version=3)  # type: ignore
+
+    # Prefix Imputer
+    imputer_onnx = add_prefix(imputer_onnx, prefix="imputer_")  # type: ignore
+    imputer_out_name = imputer_onnx.graph.output[0].name  # type: ignore
+
+    # 2. Convert PCA
+    pca_onnx = pca_export(pca, input_dim)
+    pca_in_name = pca_onnx.graph.input[0].name  # type: ignore
+
+    # Merge Imputer + PCA
+    pipeline_model = merge_models(
+        imputer_onnx,  # type: ignore
+        pca_onnx,  # type: ignore
+        io_map=[(imputer_out_name, pca_in_name)],  # type: ignore
+    )
+
+    return pipeline_model, pipeline_model.graph.output[0].name
+
+
+def _merge_and_save_ensemble(
+    prefixed_models: List[onnx.ModelProto],
+    reg_names: List[str],
     input_dim: int,
     output_path: Path,
     metadata: Dict[str, str] | None = None,
 ) -> None:
     """
-    Save an ensemble of models (Imputer + PCA + Model) combined.
-    models: List of (Imputer, PCA, Model) tuples.
-    metadata: Optional dictionary of metadata to save in the ONNX model.
+    Merges all split models, adds an averaging node, and saves the final ensemble.
     """
-
-    prefixed_models = []
-    split_info = []  # Store (model_type, reg_base, class_base) for each split
-
-    # Process each split
-    for i, (imputer, pca, model) in enumerate(models):
-        split_prefix = f"split_{i}_"
-
-        # 1. Convert Imputer
-        initial_type = [("input", FloatTensorType([None, input_dim]))]
-        imputer_onnx = convert_sklearn(
-            imputer, initial_types=initial_type, target_opset=18
-        )
-        _ensure_opset(imputer_onnx, 19)  # type: ignore
-
-        # Prefix Imputer
-        imputer_onnx = add_prefix(imputer_onnx, prefix="imputer_")  # type: ignore
-        imputer_out_name = imputer_onnx.graph.output[0].name  # type: ignore
-
-        # 2. Convert PCA
-        pca_onnx = pca_export(pca, input_dim)
-        pca_in_name = pca_onnx.graph.input[0].name  # type: ignore
-
-        # Merge Imputer + PCA
-        current_model_imp_pca = merge_models(
-            imputer_onnx,  # type: ignore
-            pca_onnx,  # type: ignore
-            io_map=[(imputer_out_name, pca_in_name)],  # type: ignore
-        )
-
-        # 3. Convert Model
-        if isinstance(model, Model):
-            model_type = "nn"
-            current_model = neural_export(model)
-
-        elif isinstance(model, SVR):
-            model_type = "svm"
-            current_model = svm_export(model)
-
-        elif isinstance(model, XGBRegressor):
-            model_type = "xgb"
-            current_model = xgboost_export(model)
-
-        # Ensure opset matches
-        _ensure_opset(current_model, 19)
-
-        # Merge (Imputer + PCA) with Model
-        # output of PCA is the input to the Model
-        # We need to find the output name of the current (Imputer+PCA) model
-        # which is essentially the output of the PCA part.
-
-        # current_model_imp_pca has outputs.
-        # current_model has inputs.
-
-        pca_out_name = current_model_imp_pca.graph.output[0].name
-        model_in_name = current_model.graph.input[0].name
-
-        # To avoid name collisions between PCA internal nodes and Model internal nodes
-        # (e.g. "variable" is common), we should prefix the Model before merging.
-        # But we need to know the new input name after prefixing.
-
-        model_prefix = "model_"
-        current_model_prefixed = add_prefix(current_model, prefix=model_prefix)
-        model_in_name_prefixed = model_prefix + model_in_name
-
-        combined_split_model = merge_models(
-            current_model_imp_pca,
-            current_model_prefixed,
-            io_map=[(pca_out_name, model_in_name_prefixed)],
-        )
-
-        # Collect split info for averaging later
-        # We need to know the output names of the model part
-        # Neural, XGB, SVM have different output structures.
-        if model_type == "nn":
-            # Neural has "reg_output" theoretically.
-            # We assume the output we want is the first one or named specifically.
-            # But let's trust the graph output 0 is what we want for regression.
-            reg_base = model_prefix + current_model.graph.output[0].name
-
-        elif model_type == "xgb":
-            # XGBoost: output[0] is prediction
-            reg_base = model_prefix + current_model.graph.output[0].name
-
-        elif model_type == "svm":
-            # SVM: output[0] is prediction
-            reg_base = model_prefix + current_model.graph.output[0].name
-
-        split_info.append(reg_base)
-
-        # Prefix everything in this split's graph
-        prefixed_model = add_prefix(combined_split_model, prefix=split_prefix)
-        prefixed_models.append(prefixed_model)
-
-    # --- Merge All splits ---
-    # We want a single input "input" that feeds into all split_i_input
-
     # Start with the first split
     combined_model = prefixed_models[0]
 
@@ -226,13 +162,9 @@ def ensemble_export(
     graph = combined_model.graph
 
     # Find all inputs that look like "split_X_imputer_input"
-    # The input name structure is likely "split_i_imputer_input"
-
-    # We need to find the specific input names created by add_prefix
-    # We'll look for any input ending with "imputer_input"
     split_inputs = []
     for node in graph.input:
-        if node.name.endswith("imputer_input"):
+        if "imputer_input" in node.name:  # Robust check
             split_inputs.append(node.name)
 
     # Create a global input
@@ -258,18 +190,9 @@ def ensemble_export(
         ]
     )
 
-    # --- Average Outputs ---
-    reg_names = []
-
-    # Helper to find output names
-    for i, reg_base in enumerate(split_info):
-        prefix = f"split_{i}_"
-        reg_names.append(prefix + reg_base)
-
-    # Add Mean nodes
+    # Add Mean node
     final_reg_name = "final_ff_score"
 
-    # Check if we have outputs to average
     if reg_names:
         mean_reg_node = helper.make_node(
             "Mean", inputs=reg_names, outputs=[final_reg_name], name="Mean_FF"
@@ -297,3 +220,144 @@ def ensemble_export(
 
     onnx.save(combined_model, output_path)
     print(f"Ensemble saved to {output_path}")
+
+
+def _export_neural_ensemble(models, input_dim, output_path, metadata):
+    prefixed_models = []
+    reg_names = []
+
+    for i, (imputer, pca, model) in enumerate(models):
+        split_prefix = f"split_{i}_"
+
+        # Pipeline: Imputer -> PCA
+        pipeline_model, pipeline_out = _export_processing_pipeline(
+            imputer, pca, input_dim
+        )
+
+        # Model: Neural
+        model_onnx = neural_export(model)
+        _ensure_opset(model_onnx, 18, ml_version=3)
+
+        model_prefix = "model_"
+        model_onnx = add_prefix(model_onnx, prefix=model_prefix)
+        model_in = model_onnx.graph.input[0].name
+
+        # Merge
+        combined_split = merge_models(
+            pipeline_model, model_onnx, io_map=[(pipeline_out, model_in)]
+        )
+
+        # Track output
+        # Neural output assumed to be first
+        reg_base = model_prefix + model_onnx.graph.output[0].name.replace(
+            model_prefix, ""
+        )
+
+        reg_name = split_prefix + model_onnx.graph.output[0].name
+        reg_names.append(reg_name)
+
+        prefixed_models.append(add_prefix(combined_split, prefix=split_prefix))
+
+    _merge_and_save_ensemble(
+        prefixed_models, reg_names, input_dim, output_path, metadata
+    )
+
+
+def _export_xgboost_ensemble(models, input_dim, output_path, metadata):
+    prefixed_models = []
+    reg_names = []
+
+    for i, (imputer, pca, model) in enumerate(models):
+        split_prefix = f"split_{i}_"
+
+        pipeline_model, pipeline_out = _export_processing_pipeline(
+            imputer, pca, input_dim
+        )
+
+        model_onnx = xgboost_export(model)
+        _ensure_opset(model_onnx, 18, ml_version=3)
+
+        model_prefix = "model_"
+        model_onnx = add_prefix(model_onnx, prefix=model_prefix)
+        model_in = model_onnx.graph.input[0].name
+
+        combined_split = merge_models(
+            pipeline_model, model_onnx, io_map=[(pipeline_out, model_in)]
+        )
+
+        reg_name = split_prefix + model_onnx.graph.output[0].name
+        reg_names.append(reg_name)
+
+        prefixed_models.append(add_prefix(combined_split, prefix=split_prefix))
+
+    _merge_and_save_ensemble(
+        prefixed_models, reg_names, input_dim, output_path, metadata
+    )
+
+
+def _export_svm_ensemble(models, input_dim, output_path, metadata):
+    prefixed_models = []
+    reg_names = []
+
+    for i, (imputer, pca, model) in enumerate(models):
+        split_prefix = f"split_{i}_"
+
+        pipeline_model, pipeline_out = _export_processing_pipeline(
+            imputer, pca, input_dim
+        )
+
+        model_onnx = svm_export(model)
+        _ensure_opset(model_onnx, 18, ml_version=3)
+
+        model_prefix = "model_"
+        model_onnx = add_prefix(model_onnx, prefix=model_prefix)
+        model_in = model_onnx.graph.input[0].name
+
+        combined_split = merge_models(
+            pipeline_model, model_onnx, io_map=[(pipeline_out, model_in)]
+        )
+
+        reg_name = split_prefix + model_onnx.graph.output[0].name
+        reg_names.append(reg_name)
+
+        prefixed_models.append(add_prefix(combined_split, prefix=split_prefix))
+
+    _merge_and_save_ensemble(
+        prefixed_models, reg_names, input_dim, output_path, metadata
+    )
+
+
+def ensemble_export(
+    models: List[
+        Tuple[
+            SimpleImputer | KNNImputer | IterativeImputer,
+            PCA,
+            Model | XGBRegressor | SVR,
+        ]
+    ],
+    input_dim: int,
+    output_path: Path,
+    metadata: Dict[str, str] | None = None,
+) -> None:
+    """
+    Save an ensemble of models (Imputer + PCA + Model) combined.
+    models: List of (Imputer, PCA, Model) tuples.
+    metadata: Optional dictionary of metadata to save in the ONNX model.
+    """
+    if not models:
+        return
+
+    # Detect model type from first split
+    _, _, first_model = models[0]
+
+    if isinstance(first_model, Model):
+        print("Exporting Neural Network Ensemble...")
+        _export_neural_ensemble(models, input_dim, output_path, metadata)
+    elif isinstance(first_model, XGBRegressor):
+        print("Exporting XGBoost Ensemble...")
+        _export_xgboost_ensemble(models, input_dim, output_path, metadata)
+    elif isinstance(first_model, SVR):
+        print("Exporting SVM Ensemble...")
+        _export_svm_ensemble(models, input_dim, output_path, metadata)
+    else:
+        raise ValueError(f"Unsupported model type: {type(first_model)}")
