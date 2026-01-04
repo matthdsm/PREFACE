@@ -21,6 +21,7 @@ from preface.lib.plot import (
     plot_tsne,
     plot_regression_performance,
     plot_cv_splits,
+    plot_ffx,
 )
 from preface.lib.functions import preprocess_ratios, ensemble_export
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
@@ -41,12 +42,23 @@ class ModelOptions(Enum):
 
 def preface_train(
     samplesheet: Path = typer.Option(
-        ..., "--samplesheet", help="Path to samplesheet file"
+        ...,
+        "--samplesheet",
+        help="Path to samplesheet file",
+        file_okay=True,
+        dir_okay=False,
+        exists=True,
     ),
-    out_dir: Path = typer.Option(os.getcwd(), "--outdir", help="Output directory"),
+    out_dir: Path = typer.Option(
+        os.getcwd(),
+        "--outdir",
+        help="Output directory",
+        file_okay=False,
+        dir_okay=True,
+    ),
     # Data handling
     impute: ImputeOptions = typer.Option(
-        ImputeOptions.ZERO, "--impute", help="Impute missing values"
+        ImputeOptions.MEAN, "--impute", help="Impute missing values"
     ),
     exclude_chrs: list[str] = typer.Option(
         EXCLUDE_CHRS, "--exclude-chrs", help="Chromosomes to exclude from training"
@@ -73,6 +85,9 @@ def preface_train(
     """
     start_time: float = time.time()
 
+    # Create output directory if it doesn't exist
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     # Load samplesheet
     # Check if samplesheet exists
     if not samplesheet.exists() or not samplesheet.is_file():
@@ -92,6 +107,10 @@ def preface_train(
     logging.info("Loading samples...")
     # instantiate lists for ratios
     ratios_list: list[pd.DataFrame] = []
+
+    # FFX: Lists to store Male FF and ChrX ratios
+    male_ff_values: list[float] = []
+    male_chrx_ratios: list[float] = []
 
     # instantiate number of bins checker
     number_of_bins: int = -1
@@ -115,6 +134,17 @@ def preface_train(
             header=0,
         )
 
+        # FFX Analysis extraction (before preprocessing/masking)
+        if sample["sex"] == "M":
+            # Assuming 'chr' column contains 'X' or 'chrX'
+            # We check for both just in case, or standarize.
+            # R script uses: bin.table$chr['X' == bin.table$chr]
+            chrx_data = ratios[ratios["chr"].isin(["X", "chrX"])]
+            if not chrx_data.empty:
+                mean_chrx = chrx_data["ratio"].mean()
+                male_chrx_ratios.append(mean_chrx)
+                male_ff_values.append(sample["FF"])
+
         # check number of bins consistency
         number_of_bins_current = len(ratios)
         if number_of_bins == -1:
@@ -133,6 +163,20 @@ def preface_train(
 
         # add to list
         ratios_list.append(masked_ratios)
+
+    # FFX Analysis Plot
+    ffx_intercept = 0.0
+    ffx_slope = 1.0
+
+    if len(male_ff_values) > 5:  # Need some points for regression
+        logging.info("Generating FFX analysis plot...")
+        ffx_intercept, ffx_slope = plot_ffx(
+            np.array(male_ff_values),
+            np.array(male_chrx_ratios),
+            out_dir / "FFX.png",
+        )
+    else:
+        logging.warning("Not enough male samples for FFX analysis.")
 
     # Stack dataframes horizontally
     logging.info("Merging sample data...")
@@ -156,11 +200,7 @@ def preface_train(
     # Split into features and labels
     target_cols = ["sex", "ff"]
     x: npt.NDArray = ratios_per_sample.drop(columns=target_cols).to_numpy()
-    # x_male: npt.NDArray = ratios_per_sample[ratios_per_sample["sex"] == 1].drop(columns=target_cols).to_numpy()
-    # x_female: npt.NDArray = ratios_per_sample[ratios_per_sample["sex"] == 0].drop(columns=target_cols).to_numpy()
     y: npt.NDArray = ratios_per_sample[["ff"]].to_numpy()
-    # y_male: npt.NDArray = ratios_per_sample[ratios_per_sample["sex"] == 1][["ff"]].to_numpy()
-    # y_female: npt.NDArray = ratios_per_sample[ratios_per_sample["sex"] == 0][["ff"]].to_numpy()
 
     # Generate bins for the target
     # prevent data leakage and keep the distribution
@@ -328,12 +368,63 @@ def preface_train(
 
     with open(out_dir / "training_statistics.txt", "w", encoding="utf-8") as f:
         f.write(
-f"""PREFACE - PREdict FetAl ComponEnt
+            f"""PREFACE - PREdict FetAl ComponEnt
 Training time: {time.time() - start_time:.0f} seconds
 Overall correlation (r): {info_overall["correlation"]:.4f}
 Overall mean absolute error (MAE): {info_overall["mae"]:.4f} ± {info_overall["sd_diff"]:.4f}
 """
         )
+
+        # Outlier Detection
+        # Based on R script: deviations > MAE + 3 * SD
+        mae = info_overall["mae"]
+        sd = info_overall["sd_diff"]
+        threshold = mae + 3 * sd
+
+        # Calculate deviations for all samples
+        # Ensure predictions and y are flat arrays
+        y_true_flat = y.flatten()
+        # predictions is a list from sess.run, so take first element
+        pred_array = predictions[0]
+        y_pred_flat = (
+            pred_array.flatten()
+            if hasattr(pred_array, "flatten")
+            else np.array(pred_array).flatten()
+        )
+
+        deviations = np.abs(y_pred_flat - y_true_flat)
+        raw_diffs = y_pred_flat - y_true_flat
+
+        outlier_indices = np.where(deviations > threshold)[0]
+
+        if len(outlier_indices) > 0:
+            f.write(
+                "\n_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-\n"
+            )
+            f.write(
+                "Below, some of the top candidates for outlier removal are listed.\n"
+            )
+            f.write(
+                "If you know some of these are low quality/have sex aberrations (when using FFY as response variable), remove them from the config file and re-run.\n"
+            )
+            f.write(
+                "Avoid removing other cases, as this will result in inaccurate performance statistics and possible overfitting towards irrelevant models.\n\n"
+            )
+            f.write("ID\tFF (%) - PREFACE (%)\n")
+
+            # Sort by deviation descending
+            sorted_indices = outlier_indices[np.argsort(-deviations[outlier_indices])]
+
+            sample_ids = ratios_per_sample.index.to_numpy()
+
+            for idx in sorted_indices:
+                sample_id = sample_ids[idx]
+                diff_val = raw_diffs[idx]
+                f.write(f"{sample_id}\t{diff_val:.4f}\n")
+
+            f.write(
+                "_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-\n\n"
+            )
 
     logging.info(
         f"Finished! Consult '{out_dir / 'training_statistics.txt'}' "

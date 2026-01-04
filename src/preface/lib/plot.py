@@ -1,4 +1,4 @@
-"""Plotting utilities for PREFACE."""
+"""Plotting module for PREFACE."""
 
 from pathlib import Path
 
@@ -11,6 +11,8 @@ from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.manifold import TSNE
 from sklearn.metrics import mean_absolute_error
+from statsmodels.robust.robust_linear_model import RLM
+import statsmodels.api as sm
 
 # Define the public API for this module
 __all__ = [
@@ -193,14 +195,21 @@ def plot_regression_performance(
 def plot_ffx(
     x_values: np.ndarray,
     y_values: np.ndarray,
-    intercept: float,
-    slope: float,
     output: Path,
-) -> None:
+) -> tuple[float, float]:
     """
     Plot FFX (Fetal Fraction from X) vs FF, before and after RLM correction.
+    Returns (intercept, slope) of the robust linear fit.
     """
     _, axes = plt.subplots(1, 2, figsize=(10, 5))
+
+    # Robust Linear Model
+    # Add constant for intercept
+    X = sm.add_constant(x_values)
+    model = RLM(y_values, X, M=sm.robust.norms.HuberT())
+    results = model.fit()
+    line_params = results.params  # [intercept, slope]
+    intercept, slope = line_params
 
     # Plot 1: Before correction
     ax1 = axes[0]
@@ -209,6 +218,7 @@ def plot_ffx(
     ax1.set_ylabel("μ(ratio X)")
     mx = np.max(x_values) if x_values.size > 0 else 1
     ax1.set_xlim(0, mx)
+    ax1.set_title("FF vs ChrX Ratio")
 
     x_range = np.array([0, mx])
     y_range = intercept + slope * x_range
@@ -217,20 +227,35 @@ def plot_ffx(
     )
     ax1.legend()
 
-    # Plot 2: After correction
+    # Plot 2: After correction ("FFX")
     ax2 = axes[1]
-    y_values_corrected = (y_values - intercept) / slope if slope != 0 else y_values
-    ax2.scatter(x_values, y_values_corrected, s=10, c="black", alpha=0.6)
+    # FFX = (x_ratio - intercept) / slope
+    # If slope is near 0, this blows up, but hopefully correlation exists.
+    ffx_values = (y_values - intercept) / slope if abs(slope) > 1e-6 else y_values
+
+    ax2.scatter(x_values, ffx_values, s=10, c="black", alpha=0.6)
     ax2.set_xlabel("FF (%)")
     ax2.set_ylabel("FFX (%)")
-    ax2.set_xlim(0, mx)
+    max_val = max(mx, np.max(ffx_values) if ffx_values.size > 0 else 0)
+    ax2.set_xlim(0, max_val)
+    ax2.set_ylim(0, max_val)
+    ax2.set_title("FF vs FFX (Corrected)")
+
     ax2.plot(
-        [0, mx], [0, mx], color=COLOR_B, linestyle=":", linewidth=3, label="f(x)=x"
+        [0, max_val],
+        [0, max_val],
+        color=COLOR_B,
+        linestyle=":",
+        linewidth=3,
+        label="f(x)=x",
     )
+    ax2.legend()
 
     plt.tight_layout()
     plt.savefig(output, dpi=300)
     plt.close()
+
+    return intercept, slope
 
 
 def plot_pca(
