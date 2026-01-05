@@ -1,0 +1,14 @@
+PREFACE - PREdict FetAl ComponEnt
+Training time: 42 seconds
+Overall correlation (r): -0.2154
+Overall mean absolute error (MAE): 0.0754 ± 0.0909
+
+_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-
+Below, some of the top candidates for outlier removal are listed.
+If you know some of these are low quality/have sex aberrations (when using FFY as response variable), remove them from the config file and re-run.
+Avoid removing other cases, as this will result in inaccurate performance statistics and possible overfitting towards irrelevant models.
+
+ID	FF (%) - PREFACE (%)
+sample_156	0.3519
+_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-
+
