@@ -10,7 +10,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.manifold import TSNE
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 from statsmodels.robust.robust_linear_model import RLM
 import statsmodels.api as sm
 
@@ -48,10 +48,13 @@ def _calculate_regression_metrics(
         slope = 0.0
         correlation = 0.0
 
+    rmse = root_mean_squared_error(y_true, y_pred)
+
     return {
         "intercept": intercept,
         "slope": slope,
         "mae": mae,
+        "rmse": rmse,
         "sd_diff": sd_diff,
         "correlation": correlation,
     }
@@ -60,7 +63,7 @@ def _calculate_regression_metrics(
 def _plot_pca_importance(
     ax: plt.Axes,  # type: ignore
     pca_explained_variance_ratio: np.ndarray,
-    n_feat: int,
+    n_components: int,
 ) -> None:
     """Plot the PCA explained variance."""
     y_vals = pca_explained_variance_ratio
@@ -74,17 +77,24 @@ def _plot_pca_importance(
     ax.set_title("PCA")
 
     # Add a vertical line to indicate the number of features used
-    log_n_feat = np.log(n_feat)
+    log_n_components = np.log(n_components)
     ylim = ax.get_ylim()
     ax.vlines(
-        log_n_feat,
+        log_n_components,
         ylim[0],
         ylim[1],
         colors=COLOR_C,
         linestyles="dotted",
         linewidth=3,
     )
-    ax.text(log_n_feat, ylim[1], "n_feat", color=COLOR_C, ha="center", va="bottom")
+    ax.text(
+        log_n_components,
+        ylim[1],
+        "n_components",
+        color=COLOR_C,
+        ha="center",
+        va="bottom",
+    )
 
 
 def _plot_scatter(
@@ -155,11 +165,36 @@ def _plot_error_histogram(
     )
 
 
+def _plot_residuals(
+    ax: plt.Axes,  # type: ignore
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    metrics: dict,
+) -> None:
+    """Plot residuals vs predicted values (RMSE visualization)."""
+    residuals = y_pred - y_true
+    # scatter plots
+    ax.scatter(y_pred, residuals, s=10, c="black", alpha=0.6)
+
+    # zero line
+    ax.axhline(0, color=COLOR_B, linestyle=":", linewidth=3, label="Zero Error")
+
+    # RMSE lines (optional, but requested "plot for RMSE", so visual guidelines help)
+    rmse = metrics["rmse"]
+    ax.axhline(rmse, color=COLOR_C, linestyle="--", linewidth=2, label="±RMSE")
+    ax.axhline(-rmse, color=COLOR_C, linestyle="--", linewidth=2)
+
+    ax.set_xlabel("Predicted Value")
+    ax.set_ylabel("Residuals (Pred - True)")
+    ax.set_title(f"Residuals (RMSE = {rmse:.4f})")
+    ax.legend()
+
+
 def plot_regression_performance(
     y_pred: np.ndarray,
     y_true: np.ndarray,
     pca_explained_variance_ratio: np.ndarray,
-    n_feat: int,
+    n_components: int,
     xlab: str,
     ylab: str,
     path: Path,
@@ -177,13 +212,14 @@ def plot_regression_performance(
 
     metrics = _calculate_regression_metrics(y_true_1d, y_pred_1d)
 
-    # Create a 3-panel plot
+    # Create a 2x2 plot (4 panels)
     # Arguments: nrows, ncols, figsize in inches
-    _, axes = plt.subplots(1, 3, figsize=(15, 5))
+    _, axes = plt.subplots(2, 2, figsize=(12, 10))
 
-    _plot_pca_importance(axes[0], pca_explained_variance_ratio, n_feat)
-    _plot_scatter(axes[1], y_true_1d, y_pred_1d, xlab, ylab, metrics)
-    _plot_error_histogram(axes[2], y_true_1d, y_pred_1d, xlab, ylab, metrics)
+    _plot_pca_importance(axes[0, 0], pca_explained_variance_ratio, n_components)
+    _plot_scatter(axes[0, 1], y_true_1d, y_pred_1d, xlab, ylab, metrics)
+    _plot_error_histogram(axes[1, 0], y_true_1d, y_pred_1d, xlab, ylab, metrics)
+    _plot_residuals(axes[1, 1], y_true_1d, y_pred_1d, metrics)
 
     plt.tight_layout()
     plt.savefig(path, dpi=300)

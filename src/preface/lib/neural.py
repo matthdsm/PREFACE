@@ -46,7 +46,7 @@ def neural_tune(
     x: npt.NDArray,
     y: npt.NDArray,
     groups: npt.NDArray,
-    n_components: int,
+    n_components: float,
     outdir: Path,
     impute_option: ImputeOptions,
     n_trials: int = 30,
@@ -73,13 +73,12 @@ def neural_tune(
             x_val, _ = impute_nan(x_val, impute_option)
 
             # reduce dimensionality with PCA
-            current_n_components = min(n_components, x_train.shape[0], x_train.shape[1])
-            pca = PCA(n_components=current_n_components)
+            pca = PCA(n_components=n_components, svd_solver="full")
             x_train = pca.fit_transform(x_train)
             x_val = pca.transform(x_val)
 
             model = create_model(
-                input_dim=current_n_components,
+                input_dim=n_components,
                 n_layers=params["n_layers"],
                 hidden_size=params["hidden_size"],
                 learning_rate=params["learning_rate"],

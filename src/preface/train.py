@@ -13,7 +13,7 @@ import numpy as np
 import numpy.typing as npt
 import onnxruntime as ort
 from sklearn.decomposition import PCA
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from sklearn.model_selection import GroupShuffleSplit
 from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
 from preface.lib.plot import (
@@ -58,7 +58,7 @@ def preface_train(
     ),
     # Data handling
     impute: ImputeOptions = typer.Option(
-        ImputeOptions.MEAN, "--impute", help="Impute missing values"
+        ImputeOptions.KNN, "--impute", help="Impute missing values"
     ),
     exclude_chrs: list[str] = typer.Option(
         EXCLUDE_CHRS, "--exclude-chrs", help="Chromosomes to exclude from training"
@@ -66,10 +66,6 @@ def preface_train(
     # cross validation options
     n_splits: int = typer.Option(
         10, "--nsplits", help="Number of splits for cross-validation"
-    ),
-    # PCA options
-    n_feat: int = typer.Option(
-        50, "--nfeat", help="Number of features (PCA components)"
     ),
     # Mode options
     tune: bool = typer.Option(
@@ -97,11 +93,6 @@ def preface_train(
     samplesheet_data: pd.DataFrame = pd.read_csv(
         samplesheet, comment="#", sep="\t", dtype={"sex": str, "ID": str}
     )
-
-    # Check samples
-    if len(samplesheet_data) < n_feat:
-        logging.error(f"Please provide at least {n_feat} labeled samples.")
-        raise typer.Exit(code=1)
 
     # Load all sample data
     logging.info("Loading samples...")
@@ -227,7 +218,7 @@ def preface_train(
             x=x,
             y=y,
             groups=groups,
-            n_components=n_feat,
+            n_components=0.95,
             outdir=out_dir,
             impute_option=impute,
         )
@@ -264,8 +255,7 @@ def preface_train(
         x_test, _ = impute_nan(x_test, impute)
 
         # reduce dimensionality with PCA for each split to prevent data leakage
-        current_n_feat = min(n_feat, x_train.shape[0], x_train.shape[1])
-        split_pca = PCA(n_components=current_n_feat)
+        split_pca = PCA(n_components=0.95, svd_solver="full")
         x_train = split_pca.fit_transform(x_train)
         x_test = split_pca.transform(x_test)
 
@@ -314,7 +304,7 @@ def preface_train(
             predictions,
             y_test,
             split_pca.explained_variance_ratio_,
-            n_feat,
+            split_pca.n_components_,
             "PREFACE (%)",
             "FF (%)",
             out_dir / "training_splits" / f"split_{split}_regression.png",
@@ -326,6 +316,7 @@ def preface_train(
             "split": split,
             # regression metrics
             "mae": mean_absolute_error(y_test, predictions),
+            "rmse": root_mean_squared_error(y_test, predictions),
             "r2": r2_score(y_test, predictions),
             "intercept": reg_perf["intercept"],
             "slope": reg_perf["slope"],
@@ -360,7 +351,7 @@ def preface_train(
         predictions[0],  # type: ignore
         y,
         first_pca.explained_variance_ratio_,
-        n_feat,
+        first_pca.n_components_,
         "PREFACE (%)",
         "FF (%)",
         out_dir / "overall_performance.png",
@@ -372,6 +363,7 @@ def preface_train(
 Training time: {time.time() - start_time:.0f} seconds
 Overall correlation (r): {info_overall["correlation"]:.4f}
 Overall mean absolute error (MAE): {info_overall["mae"]:.4f} ± {info_overall["sd_diff"]:.4f}
+Overall root mean squared error (RMSE): {info_overall["rmse"]:.4f}
 """
         )
 

@@ -17,7 +17,7 @@ def svm_tune(
     x: npt.NDArray,  # feature matrix
     y: npt.NDArray,  # target vector
     groups: npt.NDArray,  # group labels for splitting
-    n_components: int,  # number of PCA components
+    n_components: float,  # percentage of variance to explain
     outdir: Path,  # output directory
     impute_option: ImputeOptions,  # imputation strategy
     n_trials: int = 30,  # number of optimization trials
@@ -43,8 +43,7 @@ def svm_tune(
             x_val, _ = impute_nan(x_val, impute_option)
 
             # reduce dimensionality with PCA
-            current_n_components = min(n_components, x_train.shape[0], x_train.shape[1])
-            pca = PCA(n_components=current_n_components)
+            pca = PCA(n_components=n_components, svd_solver="full")
             x_train = pca.fit_transform(x_train)
             x_val = pca.transform(x_val)
 
