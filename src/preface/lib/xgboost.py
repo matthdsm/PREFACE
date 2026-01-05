@@ -28,13 +28,13 @@ def xgboost_tune(
     def objective(trial) -> float:
         params = {
             # number of boosting rounds
-            "n_estimators": trial.suggest_int("n_estimators", 100, 800),
+            "n_estimators": trial.suggest_int("n_estimators", 100, 800, step=10),
             # maximum depth of each tree
-            "max_depth": trial.suggest_int("max_depth", 3, 8),
+            "max_depth": trial.suggest_int("max_depth", 1, 10),
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
             # sampling ratios
-            "subsample": trial.suggest_float("subsample", 0.6, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+            "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
             "tree_method": "hist",
             # random state for reproducibility
             "random_state": 42,
