@@ -217,8 +217,7 @@ def plot_regression_performance(
     _plot_error_histogram(axes[1, 0], y_true_1d, y_pred_1d, xlab, ylab, metrics)
     _plot_residuals(axes[1, 1], y_true_1d, y_pred_1d, metrics)
 
-    plt.tight_layout()
-    plt.savefig(path, dpi=300)
+    plt.savefig(path, dpi=300, bbox_inches="tight")
     plt.close()
 
     return metrics
@@ -282,8 +281,7 @@ def plot_ffx(
     )
     ax2.legend()
 
-    plt.tight_layout()
-    plt.savefig(output, dpi=300)
+    plt.savefig(output, dpi=300, bbox_inches="tight")
     plt.close()
 
     return intercept, slope
@@ -323,8 +321,7 @@ def plot_pca(
     plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)")
     plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)")
     plt.title(title)
-    plt.tight_layout()
-    plt.savefig(output, dpi=300)
+    plt.savefig(output, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -368,8 +365,8 @@ def plot_tsne(
     plt.xlabel("t-SNE Dimension 1")
     plt.ylabel("t-SNE Dimension 2")
     plt.title(title)
-    plt.tight_layout()
-    plt.savefig(output, dpi=300)
+    # plt.tight_layout()
+    plt.savefig(output, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -425,6 +422,6 @@ def plot_cv_splits(
         xlim=[0, len(X)],
     )
     ax.set_title(type(cv).__name__)
-    plt.tight_layout()
-    plt.savefig(output, dpi=300)
+    # plt.tight_layout()
+    plt.savefig(output, dpi=300, bbox_inches="tight")
     plt.close()
