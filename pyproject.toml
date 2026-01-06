@@ -36,6 +36,13 @@ platforms = ["osx-arm64","linux-64","linux-aarch64"]
 [tool.pixi.feature.dev.pypi-dependencies]
 PREFACE = { path = ".", editable = true }
 
+[tool.pixi.feature.dev.dependencies]
+ipykernel = ">=7.1.0,<8"
+pip = ">=25.3,<26"
+ipython = ">=9.9.0,<10"
+jupyterlab = ">=4.5.1,<5"
+jupyter = ">=1.1.1,<2"
+
 [tool.pixi.environments]
 default = ["dev"]
 prod = []
