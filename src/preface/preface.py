@@ -20,19 +20,38 @@ from preface.predict import preface_predict  # noqa: E402
 from preface.train import preface_train  # noqa: E402
 from preface.utils.ffy import wisecondorx_ffy  # noqa: E402
 
-# Configure logging
-logging.basicConfig(
-    level="INFO",
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(rich_tracebacks=True, tracebacks_suppress=[typer])],
-)
-
 # Version
 VERSION: str = __version__
 
+
+# Configure logging
+def configure_logging(level: str):
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(rich_tracebacks=True, tracebacks_suppress=[typer])],
+        force=True,
+    )
+
+
 # Initialize Typer app
 app = typer.Typer(help="PREFACE - PREdict FetAl ComponEnt")
+
+
+@app.callback()
+def main(
+    ctx: typer.Context,
+    loglevel: str = typer.Option(
+        "INFO", help="Set the log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
+    ),
+):
+    """
+    PREFACE - PREdict FetAl ComponEnt
+    """
+    configure_logging(loglevel.upper())
+
+
 app.command(name="predict")(preface_predict)
 app.command(name="train")(preface_train)
 app.command(name="version")(lambda: print(f"PREFACE version {VERSION}"))

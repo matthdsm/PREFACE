@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List, Tuple, Dict
+import logging
 import numpy.typing as npt
 import onnx
 import pandas as pd
@@ -149,10 +150,12 @@ def _merge_and_save_ensemble(
     """
     Merges all split models, adds an averaging node, and saves the final ensemble.
     """
+    logging.info(f"Merging {len(prefixed_models)} splits into final ensemble...")
     # Start with the first split
     combined_model = prefixed_models[0]
 
     for i in range(1, len(prefixed_models)):
+        logging.debug(f"Merging split {i}...")
         combined_model = merge_models(
             combined_model,
             prefixed_models[i],
@@ -192,12 +195,60 @@ def _merge_and_save_ensemble(
 
     # Add Mean node
     final_reg_name = "final_ff_score"
+    final_std_name = "final_ff_stdev"
 
     if reg_names:
+        # 1. Mean(E[x])
         mean_reg_node = helper.make_node(
             "Mean", inputs=reg_names, outputs=[final_reg_name], name="Mean_FF"
         )
         graph.node.append(mean_reg_node)
+
+        # 2. Stdev = Sqrt(E[x^2] - (E[x])^2)
+        # 2a. Squared inputs x^2
+        sq_names = []
+        for name in reg_names:
+            sq_name = name + "_sq"
+            sq_names.append(sq_name)
+            node = helper.make_node("Mul", inputs=[name, name], outputs=[sq_name])
+            graph.node.append(node)
+
+        # 2b. Mean of squares E[x^2]
+        mean_sq_name = "mean_sq"
+        node = helper.make_node(
+            "Mean", inputs=sq_names, outputs=[mean_sq_name], name="Mean_Sq_FF"
+        )
+        graph.node.append(node)
+
+        # 2c. Square of mean (E[x])^2
+        sq_mean_name = "sq_mean"
+        node = helper.make_node(
+            "Mul",
+            inputs=[final_reg_name, final_reg_name],
+            outputs=[sq_mean_name],
+            name="Sq_Mean_FF",
+        )
+        graph.node.append(node)
+
+        # 2d. Variance = E[x^2] - (E[x])^2
+        var_name = "variance"
+        node = helper.make_node(
+            "Sub", inputs=[mean_sq_name, sq_mean_name], outputs=[var_name], name="Var_FF"
+        )
+        graph.node.append(node)
+
+        # 2e. Relu to ensure non-negative variance (float errors)
+        var_relu_name = "variance_relu"
+        node = helper.make_node(
+            "Relu", inputs=[var_name], outputs=[var_relu_name], name="Var_Relu_FF"
+        )
+        graph.node.append(node)
+
+        # 2f. Sqrt -> Stdev
+        node = helper.make_node(
+            "Sqrt", inputs=[var_relu_name], outputs=[final_std_name], name="Stdev_FF"
+        )
+        graph.node.append(node)
 
     # Clean outputs
     while len(graph.output) > 0:
@@ -207,6 +258,9 @@ def _merge_and_save_ensemble(
     if reg_names:
         new_outputs.append(
             helper.make_tensor_value_info(final_reg_name, TensorProto.FLOAT, [None, 1])
+        )
+        new_outputs.append(
+            helper.make_tensor_value_info(final_std_name, TensorProto.FLOAT, [None, 1])
         )
 
     graph.output.extend(new_outputs)
@@ -219,7 +273,7 @@ def _merge_and_save_ensemble(
             meta.value = value
 
     onnx.save(combined_model, output_path)
-    print(f"Ensemble saved to {output_path}")
+    logging.info(f"Ensemble saved to {output_path}")
 
 
 def _export_neural_ensemble(models, input_dim, output_path, metadata):
@@ -227,6 +281,7 @@ def _export_neural_ensemble(models, input_dim, output_path, metadata):
     reg_names = []
 
     for i, (imputer, pca, model) in enumerate(models):
+        logging.debug(f"Exporting neural split {i}...")
         split_prefix = f"split_{i}_"
 
         # Pipeline: Imputer -> PCA
@@ -268,6 +323,7 @@ def _export_xgboost_ensemble(models, input_dim, output_path, metadata):
     reg_names = []
 
     for i, (imputer, pca, model) in enumerate(models):
+        logging.debug(f"Exporting xgboost split {i}...")
         split_prefix = f"split_{i}_"
 
         pipeline_model, pipeline_out = _export_processing_pipeline(
@@ -300,6 +356,7 @@ def _export_svm_ensemble(models, input_dim, output_path, metadata):
     reg_names = []
 
     for i, (imputer, pca, model) in enumerate(models):
+        logging.debug(f"Exporting svm split {i}...")
         split_prefix = f"split_{i}_"
 
         pipeline_model, pipeline_out = _export_processing_pipeline(
@@ -351,13 +408,13 @@ def ensemble_export(
     _, _, first_model = models[0]
 
     if isinstance(first_model, Model):
-        print("Exporting Neural Network Ensemble...")
+        logging.info("Exporting Neural Network Ensemble...")
         _export_neural_ensemble(models, input_dim, output_path, metadata)
     elif isinstance(first_model, XGBRegressor):
-        print("Exporting XGBoost Ensemble...")
+        logging.info("Exporting XGBoost Ensemble...")
         _export_xgboost_ensemble(models, input_dim, output_path, metadata)
     elif isinstance(first_model, SVR):
-        print("Exporting SVM Ensemble...")
+        logging.info("Exporting SVM Ensemble...")
         _export_svm_ensemble(models, input_dim, output_path, metadata)
     else:
         raise ValueError(f"Unsupported model type: {type(first_model)}")

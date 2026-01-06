@@ -78,7 +78,7 @@ def neural_tune(
             x_val = pca.transform(x_val)
 
             model = create_model(
-                input_dim=n_components,
+                input_dim=x_train.shape[1],
                 n_layers=params["n_layers"],
                 hidden_size=params["hidden_size"],
                 learning_rate=params["learning_rate"],

@@ -1,4 +1,5 @@
 PREFACE - PREdict FetAl ComponEnt
-Training time: 33 seconds
-Overall correlation (r): 0.5384
-Overall mean absolute error (MAE): 0.0689 ± 0.0437
+Training time: 166 seconds
+Overall correlation (r): 0.5278
+Overall mean absolute error (MAE): 0.0804 ± 0.0447
+Overall root mean squared error (RMSE): 0.0898

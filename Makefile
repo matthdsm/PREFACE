@@ -42,7 +42,8 @@ build:
 	docker build --platform $(PLATFORMS) -t $(REGISTRY)/$(USERNAME)/$(IMAGE_NAME):$(TAG) .
 
 push:
-	docker build --platform $(PLATFORMS) -t $(REGISTRY)/$(USERNAME)/$(IMAGE_NAME):$(TAG) --push .
+	docker build --platform $(PLATFORMS) -t $(REGISTRY)/$(USERNAME)/$(IMAGE_NAME):$(TAG) .
+	docker push $(REGISTRY)/$(USERNAME)/$(IMAGE_NAME):$(TAG)
 
 bump-version:
 	@if [ -z "$(v)" ]; then echo "Usage: make bump-version v=1.0.0"; exit 1; fi

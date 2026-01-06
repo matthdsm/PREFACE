@@ -10,6 +10,7 @@ for IMPUTE_TYPE in zero mean median knn; do
             --samplesheet samplesheet.tsv \
             --outdir ./output/${MODEL_TYPE}_${IMPUTE_TYPE} \
             --model ${MODEL_TYPE} \
-            --impute ${IMPUTE_TYPE}
+            --impute ${IMPUTE_TYPE} \
+            --tune
     done
 done

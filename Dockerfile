@@ -2,23 +2,26 @@
 FROM ghcr.io/prefix-dev/pixi:latest AS build
 
 # Copy everything for the build
-COPY . /app
 WORKDIR /app
+COPY . .
 
-# Install dependencies and the project non-editable
-RUN pixi install --frozen --locked
-RUN pixi run pip install --no-deps .
+# Install dependencies
+RUN pixi install -e prod
+# Install app
+RUN pixi run -e prod pip install --no-deps .
+# Add entrypoint script
+RUN pixi shell-hook -e prod -s bash > /shell-hook
+RUN echo "#!/bin/bash" > /app/entrypoint.sh
+RUN cat /shell-hook >> /app/entrypoint.sh
+RUN echo 'exec "$@"' >> /app/entrypoint.sh
+
 
 # Stage 2: Runtime
 FROM python:3.12-slim
 
-WORKDIR /app
-
 # Copy only the installed environment from the build stage
-COPY --from=build /app/.pixi/envs/default /app/.pixi/envs/default
-
-# Set path to use the pixi environment
-ENV PATH="/app/.pixi/envs/default/bin:$PATH"
-
+COPY --from=build /app/.pixi/envs/prod /app/.pixi/envs/prod
+# Copy entrypoint script
+COPY --from=build --chmod=0755 /app/entrypoint.sh /app/entrypoint.sh
 # Set entrypoint
-ENTRYPOINT ["PREFACE"]
+ENTRYPOINT [ "/app/entrypoint.sh" ]
