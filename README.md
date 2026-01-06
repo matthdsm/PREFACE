@@ -10,7 +10,7 @@ A share of all cell-free DNA fragments isolated from maternal plasma during preg
 
 Each sample (whether it is used for training or for predicting) should be passed to PREFACE in the format shown below. During benchmarking, using a bin size of 100 kb (others might work equally well), copy number normalization was performed by [WisecondorX](https://github.com/CenterForMedicalGeneticsGhent/WisecondorX/), yet PREFACE is not limited to any copy number alteration software, however, the default output of WisecondorX is directly interpretable by PREFACE.  
 
-- Example: ```./examples/infile.bed```  
+- Example: ```./examples/ratios.bed```  
 - Tab-separated file with at least four columns.  
 - The name of these columns (passed as a header) must be 'chr', 'start', 'end' and 'ratio'.  
     - The possible values of 'chr' are 1 until 22, and X and Y (uppercase).  
@@ -18,68 +18,179 @@ Each sample (whether it is used for training or for predicting) should be passed
     - The ratio can be unknown at certain loci (e.g. often seen at centromeres). Here, values should be expressed as 'NaN' or 'NA'.  
 - The order of rows does not matter. Yet, it is paramount that, for a certain line, file x deals with the same locus as file y. This implies, of course, that all copy number alteration files have the same number of lines.  
 
-### PREFACE's config.txt
+### PREFACE's samplesheet.tsv
 
-For training, PREFACE requires a config file.  
+For training, PREFACE requires a samplesheet file.  
 
-- Example: ```./examples/config.txt```  
-- Tab-separated file with at least four columns.  
-- The name of these columns (passed as a header) must be 'ID', 'filepath', 'gender' and 'FF'.  
+- Example: ```./examples/samplesheet.tsv```  
+- TSV file with at least four columns.  
+- The name of these columns (passed as a header) must be 'ID', 'filepath', 'sex' and 'FF'.  
     - 'ID' is used to specify a mandatory unique identifier to each of the samples.  
-    - The 'filepath' column holds the full absolute path of the training copy number alteration files.  
-    - The possible values for 'gender' are either 'M' (male) or 'F' (female), representing fetal gender. Twins/triplets/... can be included if they are all male or all female.  
-    - The 'FF' column contains the response variable (the 'true' fetal fraction). One can use any method he/she believes performs best at quantifying the actual fetal fraction. PREFACE was benchmarked using the number of mapped Y-reads, referred to as FFY. As FFY is not informative for female fetuses, this measure is ignored for cases labeled with 'F', unless the `--femprop` flag is given (see below).  
+    - The 'filepath' column holds the full absolute path of the training copy number alteration files (.bed).  
+    - The possible values for 'sex' are either 'M' (male) or 'F' (female), representing fetal gender.  
+    - The 'FF' column contains the response variable (the 'true' fetal fraction). One can use any method he/she believes performs best at quantifying the actual fetal fraction. PREFACE was benchmarked using the number of mapped Y-reads, referred to as FFY.
+
+## Installation & Setup
+
+PREFACE can be installed using `pip`:
+
+```bash
+pip install .
+```
+
+Alternatively, for a reproducible environment using [pixi](https://pixi.sh):
+
+```bash
+pixi install
+pixi run PREFACE --help
+```
 
 ## Model training
 
-```bash
+The core of PREFACE is its ability to train a predictive model on your own cohort data.
 
-RScript PREFACE.R train --config path/to/config.txt --outdir path/to/dir/ [optional arguments]  
+```bash
+PREFACE train --samplesheet path/to/samplesheet.tsv [optional arguments]
 ```
 
-<br>Optional argument <br><br> | Function  
-:--- | :---  
-`--nfeat x` | Number of principal components to use during modeling. (default: x=50)  
-`--hidden x` | Number of hidden layers used in neural network. Use with caution. (default: x=2)  
-`--cpus x` | Use for multiprocessing, number of requested threads. (default: x=1)  
-`--femprop` | When using FFY as FF (recommended), FF labels for female fetuses are irrelevant, and should be ignored in the supervised learning phase (default). If this behavior is not desired, use this flag, which demands that the given FFs for female fetuses are proportional to their actual FF.  
-`--olm` | It might be possible the neural network does not converge; or for your kind of data/sample size, an ordinary linear model might be a better option. In these cases, use this flag.  
-`--noskewcorrect` | This flag ascertains the best fit for most (instead of all) of the data is generated. Mostly not recommended.  
+### Training Process
+
+The training pipeline is a robust, multi-step process designed to build a generalized and accurate model:
+
+1.  **Data Loading & Preprocessing**: The tool begins by loading all samples defined in the samplesheet. It checks for data consistency across files and filters out genomic bins (features) that have more than 1% missing values.
+2.  **Imputation**: Any remaining missing values (`NaN`) are handled using the strategy specified by the `--impute` option (e.g., filling with the mean, median, using MICE or k-NN).
+3.  **Cross-Validation**: To prevent overfitting and get a reliable estimate of performance, PREFACE uses a `GroupShuffleSplit` strategy. It repeatedly splits the data into training and testing sets, ensuring that the distribution of fetal fraction values is similar in each split.
+4.  **Dimensionality Reduction**: For each training split, Principal Component Analysis (PCA) is performed to reduce the high-dimensional genomic data into a smaller, more informative set of features (`--nfeat`).
+5.  **Model Fitting**: A predictive model is trained on the PCA-reduced data. You can choose between three architectures using the `--model` flag: a `neural` network, `xgboost`, or `svm`.
+6.  **Hyperparameter Tuning (Optional)**: If you add the `--tune` flag, PREFACE will first run an optimization process using Optuna to find the best hyperparameters for the chosen model architecture on your specific dataset.
+7.  **Ensemble Creation**: Instead of relying on a single model, PREFACE builds an ensemble from all the models trained during the cross-validation splits. This technique typically results in a more robust and accurate final model. The ensemble, including the complete preprocessing pipeline (imputation and PCA), is saved as a single `PREFACE.onnx` file.
+
+### Ensemble Topology
+
+This diagram illustrates the structure of the PREFACE ensemble model, including data processing, cross-validation splits, and model options.
+
+```mermaid
+graph TD
+    Input[Data Input: Genomic Ratios] --> Preprocess[Preprocess: Exclude Chromosomes]
+    Preprocess --> GlobalSplit{Split Data}
+    
+    subgraph "Cross-Validation Ensemble (n_splits)"
+        direction TB
+        GlobalSplit -->|Split 1| Split1
+        GlobalSplit -->|...| SplitDot[...]
+        GlobalSplit -->|Split n| SplitN
+        
+        subgraph Split1 [Split i Pipeline]
+            direction TB
+            S1_Input[Train/Test Data] --> Impute{Imputation Strategy}
+            
+            Impute -->|Simple| ImpZero[Zero / Constant]
+            Impute -->|Simple| ImpMean[Mean]
+            Impute -->|Simple| ImpMedian[Median]
+            Impute -->|Sklearn| ImpKNN[K-Nearest Neighbors]
+            Impute -->|Experimental| ImpMICE[MICE / Iterative]
+            
+            ImpZero --> PCA[PCA: Dimensionality Reduction]
+            ImpMean --> PCA
+            ImpMedian --> PCA
+            ImpKNN --> PCA
+            ImpMICE --> PCA
+            
+            PCA --> ModelSelect{Model Selection}
+            
+            ModelSelect --> ModNN[Neural Network]
+            ModelSelect --> ModXGB[XGBoost Regressor]
+            ModelSelect --> ModSVM[Support Vector Machine]
+            
+            ModNN --> Output1[Regression Output]
+            ModXGB --> Output1
+            ModSVM --> Output1
+        end
+    end
+
+    Split1 -->|Output| Aggregator[Aggregator: Mean]
+    SplitDot -->|Output| Aggregator
+    SplitN -->|Output| Aggregator
+    
+    Aggregator --> FinalResult[Final Prediction: Fetal Fraction]
+
+    %% Styling
+    classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    classDef decision fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
+    classDef model fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    classDef output fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    
+    class Input,Preprocess,PCA,Aggregator process;
+    class Impute,ModelSelect,GlobalSplit decision;
+    class ImpZero,ImpMean,ImpMedian,ImpKNN,ImpMICE,ModNN,ModXGB,ModSVM model;
+    class FinalResult,Output1 output;
+```
+
+### Options
+
+| Argument | Type | Default | Function |
+| :--- | :--- | :--- | :--- |
+| `--samplesheet` | PATH | (Required) | Path to the samplesheet TSV file. |
+| `--outdir` | PATH | (Current Dir) | Output directory for models and plots. |
+| `--impute` | [zero\|mice\|mean\|median\|knn] | `zero` | Strategy to handle missing values (NaNs). |
+| `--exclude-chrs` | TEXT | `13,18,21,X,Y` | Chromosomes to exclude from training features. |
+| `--nsplits` | INTEGER | `10` | Number of splits for cross-validation. |
+| `--nfeat` | INTEGER | `50` | Number of features (PCA components) to use. |
+| `--tune` | BOOLEAN | `False` | Enable automatic hyperparameter tuning (via Optuna). |
+| `--model` | [neural\|xgboost\|svm] | `neural` | Type of model architecture to train. |
+
 
 ## Predicting
 
 ```bash
-
-RScript PREFACE.R predict --infile path/to/infile.bed --model path/to/model.RData [optional arguments]  
+PREFACE predict --infile path/to/infile.bed --model path/to/PREFACE.onnx
 ```
 
-<br>Optional argument <br><br> | Function  
-:--- | :---  
-`--json x` | Predictions are written to stdout. Use this flag for json format. Optionally provide 'x' to generate .json file x.  
+### Options
 
-## Model optimization  
+| Argument | Type | Default | Function |
+| :--- | :--- | :--- | :--- |
+| `--infile` | PATH | (Required) | Path to input BED file for prediction. |
+| `--model` | PATH | (Required) | Path to the trained `.onnx` model file. |
 
+The prediction output includes both the predicted fetal fraction score and the fetal sex probability.
+
+## Version
+
+To check the installed version of PREFACE:
+
+```bash
+PREFACE version
+```
+
+## Model optimization
 - The most important parameter is `--nfeat`:  
     - It represents the number of principal components (PCs) that will be used as features during model training. Depending on the used copy number alteration software, bin size and the number of training samples, it might have different optimal values. In general, I recommend to train a model using the default parameters. The output will contain a plot that enables you to review the selected `--nfeat`. Two parts should be seen in the proportion of variance across the principal components (indexed in order of importance):  
         - A 'random' phase (representing PCs that explain variance caused by, inter alia, fetal fraction).  
         - A 'non-random' phase (representing PCs that explain variance caused by natural Gaussian noise).  
     - An optimal `--nfeat` captures the 'random' phase (as shown in the example at `./examples/overall_performance.png`). Capturing too much of the 'non-random' phase could lead to convergence problems during modeling.  
     - If you are not satisfied with the performance of your model or with the position of `--nfeat`, re-run with a different number of features.  
-- Note that the final model will probably be a bit more accurate than what is claimed by the performance statistics. This is because PREFACE uses a cross-validation strategy where 10% of the (male) samples are excluded from training, after which these 10% serve as validation cases. This process is repeated 10 times. Therefore, the final performance measurements are based on models trained with only 90% of the (male) fetuses, yet the resulting model is trained with all provided cases.  
+- Note that the final model will probably be a bit more accurate than what is claimed by the performance statistics. This is because PREFACE uses a cross-validation strategy where a subset of samples are excluded from training, after which these serve as validation cases. This process is repeated `n` times (default 5). Therefore, the final performance measurements are based on models trained with only partial data, yet the resulting model is trained with all provided cases.  
 
-# Required R packages
+# Utilities
 
-- doParallel (v1.0.14)  
-- foreach (v1.4.4)  
-- neuralnet (v1.44.2)  
-- glmnet (v2.0-16)  
-- data.table (v1.11.8)  
-- MASS (v7.3-49)  
-- irlba (v2.3.3)  
+## FFY Calculator
 
-Other versions are of course expected to work equally well. To install within R use:  
+Calculates Fetal Fraction from Y-chromosome reads (FFY) directly from WisecondorX output files.
+
+### Usage
 
 ```bash
-
-install.packages(c('data.table', 'glmnet', 'neuralnet', 'foreach', 'doParallel', 'MASS', 'irlba'))
+PREFACE utils ffy <wisecondorx_npz> [--sex-cutoff <cutoff>] [--slope <slope>] [--intercept <intercept>]
 ```
+
+| Argument | Type | Default | Function |
+| :--- | :--- | :--- | :--- |
+| `wisecondorx_npz`| ARGUMENT | (Required) | Path to WisecondorX output NPZ file. |
+| `--sex-cutoff` | FLOAT | `0.2` | Cutoff for sex determination based on raw Y fraction. |
+| `--slope` | FLOAT | `1.0` | Slope (m) for FFY calculation. |
+| `--intercept` | FLOAT | `0.0` | Intercept (b) for FFY calculation. |
+
+The Fetal Fraction (FFY) is calculated using the linear equation:
+$$FFY = \frac{Y_{fraction} - \text{Intercept}}{\text{Slope}}$$
+where $Y_{fraction}$ is the ratio of Y-mapped reads to total reads. The default values (m=1.0, b=0.0) return the raw Y fraction; adjust these based on your lab's calibration (e.g., from regression analysis of male samples).

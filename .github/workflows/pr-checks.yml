@@ -1,0 +1,29 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  checks-and-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          cache: true
+
+      - name: Install dependencies
+        run: pixi install
+      
+      - name: Run unit tests
+        run: pixi run pytest --cov=src/preface --cov-report=xml
+
+      - name: Verify Version and Changelog
+        run: pixi run python .github/scripts/ci_checks.py

@@ -1,0 +1,14 @@
+.git
+.pixi
+.ruff_cache
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.R
+.DS_Store
+data
+examples
+.gemini
+pixi.lock

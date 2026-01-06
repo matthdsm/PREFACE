@@ -1,2 +1,16 @@
 .DS_Store
 .Rhistory
+.R
+data/
+paper/
+test_output/
+*.egg-info
+*.onnx
+__pycache__/
+.gemini/
+*.ipynb
+.vscode/
+.ruff_cache/
+# pixi environments
+.pixi/*
+!.pixi/config.toml
