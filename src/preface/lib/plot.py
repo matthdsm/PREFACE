@@ -10,7 +10,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.manifold import TSNE
-from sklearn.metrics import mean_absolute_error, root_mean_squared_error
+from sklearn.metrics import mean_absolute_error, root_mean_squared_error, r2_score
 from statsmodels.robust.robust_linear_model import RLM
 import statsmodels.api as sm
 
@@ -33,8 +33,10 @@ COLOR_C: str = "#C87878"
 def _calculate_regression_metrics(
     y_true: np.ndarray, y_pred: np.ndarray
 ) -> dict[str, float]:
-    """Calculate regression metrics (MAE, R², slope, intercept)."""
+    """Calculate regression metrics (MAE, RMSE, R², slope, intercept)."""
     mae = mean_absolute_error(y_true, y_pred)
+    rmse = root_mean_squared_error(y_true, y_pred)
+    r2 = r2_score(y_true, y_pred)
     sd_diff = float(np.std(y_pred - y_true, ddof=1))
 
     if len(np.unique(y_pred)) > 1:
@@ -48,13 +50,12 @@ def _calculate_regression_metrics(
         slope = 0.0
         correlation = 0.0
 
-    rmse = root_mean_squared_error(y_true, y_pred)
-
     return {
         "intercept": intercept,
         "slope": slope,
         "mae": mae,
         "rmse": rmse,
+        "r2": r2,
         "sd_diff": sd_diff,
         "correlation": correlation,
     }
@@ -150,7 +151,7 @@ def _plot_error_histogram(
         colors=COLOR_A,
         linestyles="--",
         linewidth=3,
-        label="Mean Error",
+        label="MAE",
     )
     ax.vlines(0, 0, mx_hist, colors=COLOR_B, linestyles=":", linewidth=3, label="x=0")
     ax.legend()
@@ -201,11 +202,6 @@ def plot_regression_performance(
 ) -> dict[str, float]:
     """
     Plot a comprehensive regression performance dashboard and return statistics.
-
-    This function generates a 3-panel plot:
-    1. PCA explained variance.
-    2. A scatter plot of predicted vs. true values.
-    3. A histogram of the prediction errors.
     """
     y_true_1d = np.ravel(y_true)
     y_pred_1d = np.ravel(y_pred)
@@ -266,7 +262,6 @@ def plot_ffx(
     # Plot 2: After correction ("FFX")
     ax2 = axes[1]
     # FFX = (x_ratio - intercept) / slope
-    # If slope is near 0, this blows up, but hopefully correlation exists.
     ffx_values = (y_values - intercept) / slope if abs(slope) > 1e-6 else y_values
 
     ax2.scatter(x_values, ffx_values, s=10, c="black", alpha=0.6)

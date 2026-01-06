@@ -17,10 +17,10 @@ from sklearn.experimental import enable_iterative_imputer  # noqa
 from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
 from sklearn.decomposition import PCA
 from sklearn.svm import SVR
-from tensorflow.keras import Model  # type: ignore
 from xgboost import XGBRegressor
+from torch.nn import Module
 
-from preface.lib.neural import neural_export
+from preface.lib.neural import neural_export, NeuralNetwork
 from preface.lib.svm import svm_export
 from preface.lib.xgboost import xgboost_export
 
@@ -233,7 +233,10 @@ def _merge_and_save_ensemble(
         # 2d. Variance = E[x^2] - (E[x])^2
         var_name = "variance"
         node = helper.make_node(
-            "Sub", inputs=[mean_sq_name, sq_mean_name], outputs=[var_name], name="Var_FF"
+            "Sub",
+            inputs=[mean_sq_name, sq_mean_name],
+            outputs=[var_name],
+            name="Var_FF",
         )
         graph.node.append(node)
 
@@ -389,7 +392,7 @@ def ensemble_export(
         Tuple[
             SimpleImputer | KNNImputer | IterativeImputer,
             PCA,
-            Model | XGBRegressor | SVR,
+            NeuralNetwork | XGBRegressor | SVR,
         ]
     ],
     input_dim: int,
@@ -407,7 +410,7 @@ def ensemble_export(
     # Detect model type from first split
     _, _, first_model = models[0]
 
-    if isinstance(first_model, Model):
+    if isinstance(first_model, NeuralNetwork):
         logging.info("Exporting Neural Network Ensemble...")
         _export_neural_ensemble(models, input_dim, output_path, metadata)
     elif isinstance(first_model, XGBRegressor):

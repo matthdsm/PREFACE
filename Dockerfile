@@ -15,13 +15,14 @@ RUN echo "#!/bin/bash" > /app/entrypoint.sh
 RUN cat /shell-hook >> /app/entrypoint.sh
 RUN echo 'exec "$@"' >> /app/entrypoint.sh
 
-
-# Stage 2: Runtime
-FROM python:3.12-slim
-
-# Copy only the installed environment from the build stage
-COPY --from=build /app/.pixi/envs/prod /app/.pixi/envs/prod
-# Copy entrypoint script
-COPY --from=build --chmod=0755 /app/entrypoint.sh /app/entrypoint.sh
-# Set entrypoint
 ENTRYPOINT [ "/app/entrypoint.sh" ]
+
+# # Stage 2: Runtime
+# FROM python:3.13-slim
+
+# # Copy only the installed environment from the build stage
+# COPY --from=build /app/.pixi/envs/prod /app/.pixi/envs/prod
+# # Copy entrypoint script
+# COPY --from=build --chmod=0755 /app/entrypoint.sh /app/entrypoint.sh
+# # Set entrypoint
+# ENTRYPOINT [ "/app/entrypoint.sh" ]

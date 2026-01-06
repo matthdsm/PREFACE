@@ -1,45 +1,63 @@
 from pathlib import Path
+import io
 
 import numpy as np
 import numpy.typing as npt
 import onnx
-import onnxmltools
 import optuna
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.decomposition import PCA
 from sklearn.model_selection import GroupShuffleSplit
-from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
-from tensorflow.keras import (  # pylint: disable=no-name-in-module,import-error # type: ignore
-    Model,
-    layers,
-)
 from preface.lib.impute import ImputeOptions, impute_nan
-from onnxmltools.convert.common.data_types import FloatTensorType
 
 
-def create_model(
-    input_dim: int,
-    n_layers: int,
-    hidden_size: int,
-    learning_rate: float,
-    dropout_rate: float,
-) -> Model:
-    input_layer = layers.Input(shape=(input_dim,))
-    x = input_layer
-    for i in range(n_layers):
-        x = layers.Dense(hidden_size // (2**i), activation="relu")(x)  # type: ignore
-        x = layers.Dropout(dropout_rate)(x)
+class NeuralNetwork(nn.Module):
+    def __init__(
+        self, input_dim: int, n_layers: int, hidden_size: int, dropout_rate: float
+    ):
+        super().__init__()
+        layers = []
+        in_dim = input_dim
+        for i in range(n_layers):
+            out_dim = max(hidden_size // (2**i), 1)
+            layers.append(nn.Linear(in_dim, out_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout_rate))
+            in_dim = out_dim
+        layers.append(nn.Linear(in_dim, 1))
+        self.model = nn.Sequential(*layers)
 
-    # regression output
-    reg_out = layers.Dense(1, activation="linear", name="reg_output")(x)
+    def forward(self, x):
+        return self.model(x)
 
-    nn = Model(inputs=input_layer, outputs=reg_out)
 
-    nn.compile(
-        optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
-        loss="mse",
-        loss_weights={"reg_output": 1.0},
-    )
-    return nn
+def train_epoch(model, loader, criterion, optimizer, device):
+    model.train()
+    running_loss = 0.0
+    for inputs, targets in loader:
+        inputs, targets = inputs.to(device), targets.to(device)
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, targets)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item() * inputs.size(0)
+    return running_loss / len(loader.dataset)
+
+
+def validate_epoch(model, loader, criterion, device):
+    model.eval()
+    running_loss = 0.0
+    with torch.no_grad():
+        for inputs, targets in loader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+            running_loss += loss.item() * inputs.size(0)
+    return running_loss / len(loader.dataset)
 
 
 def neural_tune(
@@ -51,6 +69,12 @@ def neural_tune(
     impute_option: ImputeOptions,
     n_trials: int = 30,
 ) -> dict:
+    device = torch.device("cpu")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+
     def objective(trial) -> float:
         params = {
             "n_layers": trial.suggest_int("n_layers", 1, 3),
@@ -64,7 +88,7 @@ def neural_tune(
         gss_internal = GroupShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
         scores = []
 
-        for t_idx, v_idx in gss_internal.split(x, y, groups):
+        for _, (t_idx, v_idx) in enumerate(gss_internal.split(x, y, groups)):
             x_train, x_val = x[t_idx], x[v_idx]
             y_train, y_val = y[t_idx], y[v_idx]
 
@@ -77,27 +101,38 @@ def neural_tune(
             x_train = pca.fit_transform(x_train)
             x_val = pca.transform(x_val)
 
-            model = create_model(
+            # Convert to tensors
+            x_train_t = torch.tensor(x_train, dtype=torch.float32)
+            y_train_t = torch.tensor(y_train, dtype=torch.float32)
+            x_val_t = torch.tensor(x_val, dtype=torch.float32)
+            y_val_t = torch.tensor(y_val, dtype=torch.float32)
+
+            train_ds = TensorDataset(x_train_t, y_train_t)
+            val_ds = TensorDataset(x_val_t, y_val_t)
+            train_loader = DataLoader(
+                train_ds, batch_size=params["batch_size"], shuffle=True
+            )
+            val_loader = DataLoader(val_ds, batch_size=params["batch_size"])
+
+            model = NeuralNetwork(
                 input_dim=x_train.shape[1],
                 n_layers=params["n_layers"],
                 hidden_size=params["hidden_size"],
-                learning_rate=params["learning_rate"],
                 dropout_rate=params["dropout_rate"],
-            )
+            ).to(device)
 
-            history = model.fit(
-                x_train,
-                y_train,
-                validation_data=(x_val, y_val),
-                epochs=params["epochs"],
-                batch_size=params["batch_size"],
-                callbacks=[
-                    optuna.integration.TFKerasPruningCallback(trial, "val_loss")
-                ],
-            )
-            scores.append(min((history.history["val_loss"])))
+            criterion = nn.MSELoss()
+            optimizer = optim.Adam(model.parameters(), lr=params["learning_rate"])
 
-        return np.mean(scores).astype(float)
+            # Training loop
+            val_loss = float("inf")
+            for epoch in range(params["epochs"]):
+                train_epoch(model, train_loader, criterion, optimizer, device)
+                val_loss = validate_epoch(model, val_loader, criterion, device)
+                scores.append(val_loss)
+
+        mean_val_loss = np.mean(scores).astype(float)
+        return mean_val_loss
 
     study = optuna.create_study(
         direction="minimize", pruner=optuna.pruners.MedianPruner()
@@ -116,10 +151,13 @@ def neural_fit(
     y_train: npt.NDArray,
     y_test: npt.NDArray,
     params: dict,
-) -> tuple[Model, npt.NDArray]:
+) -> tuple[NeuralNetwork, npt.NDArray]:
     """Build a neural network for regression."""
-    # Clear session to prevent "tf.function retracing" warning
-    keras.backend.clear_session()
+    device = torch.device("cpu")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
 
     # default parameters
     nn_default_params = {
@@ -130,35 +168,87 @@ def neural_fit(
     }
     epochs = params.pop("epochs", 50)
     batch_size = params.pop("batch_size", 32)
+    # Merge params
+    final_params = {**nn_default_params, **params}
 
-    # Early stopping callback
-    early_stop = keras.callbacks.EarlyStopping(
-        monitor="val_loss", patience=5, restore_best_weights=True
-    )
+    # Data loaders
+    x_train_t = torch.tensor(x_train, dtype=torch.float32)
+    y_train_t = torch.tensor(y_train, dtype=torch.float32)
+    x_val_t = torch.tensor(x_test, dtype=torch.float32)
+    y_val_t = torch.tensor(y_test, dtype=torch.float32)
+
+    train_ds = TensorDataset(x_train_t, y_train_t)
+    val_ds = TensorDataset(x_val_t, y_val_t)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size)
 
     # Create model
-    model = create_model(input_dim=x_train.shape[1], **{**nn_default_params, **params})
+    model = NeuralNetwork(
+        input_dim=x_train.shape[1],
+        n_layers=final_params["n_layers"],
+        hidden_size=final_params["hidden_size"],
+        dropout_rate=final_params["dropout_rate"],
+    ).to(device)
 
-    # Fit model
-    model.fit(
-        x_train,
-        y_train,
-        validation_data=(
-            x_test,
-            y_test,
-        ),
-        epochs=epochs,
-        batch_size=batch_size,
-        callbacks=[early_stop],
-    )
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=final_params["learning_rate"])
 
-    return model, model.predict(x_test)
+    # Early stopping
+    patience = 5
+    best_val_loss = float("inf")
+    patience_counter = 0
+    best_model_state = None
+
+    for epoch in range(epochs):
+        train_epoch(model, train_loader, criterion, optimizer, device)
+        val_loss = validate_epoch(model, val_loader, criterion, device)
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+            best_model_state = model.state_dict()
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                break
+
+    if best_model_state:
+        model.load_state_dict(best_model_state)
+
+    # Predict
+    model.eval()
+    with torch.no_grad():
+        preds = model(x_val_t.to(device)).cpu().numpy()
+
+    return model, preds
 
 
-def neural_export(model: Model) -> onnx.ModelProto:
+def neural_export(model: NeuralNetwork) -> onnx.ModelProto:
     """Export neural network to ONNX format."""
-    initial_type = [("neural_input", FloatTensorType([None, model.input_shape[1]]))]
-    onnx_model = onnxmltools.convert_keras(
-        model, initial_types=initial_type, target_opset=18
+    # Since we need input dim, we check the first layer
+    # model.model[0] is Linear
+    input_dim = model.model[0].in_features  # type: ignore
+
+    dummy_input = torch.randn(1, input_dim, dtype=torch.float32)
+
+    # Needs to be on CPU for export
+    model.cpu()
+    model.eval()
+
+    f = io.BytesIO()
+    torch.onnx.export(
+        model,
+        dummy_input,
+        f,
+        input_names=["neural_input"],
+        output_names=["reg_output"],
+        dynamic_axes={
+            "neural_input": {0: "batch_size"},
+            "reg_output": {0: "batch_size"},
+        },
+        opset_version=18,
     )
-    return onnx_model
+
+    f.seek(0)
+    model_proto = onnx.load_model_from_string(f.getvalue())
+    return model_proto

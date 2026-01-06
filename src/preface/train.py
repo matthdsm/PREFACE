@@ -15,7 +15,6 @@ import onnxruntime as ort
 from sklearn.decomposition import PCA
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from sklearn.model_selection import GroupShuffleSplit
-from tensorflow import keras  # pylint: disable=no-name-in-module # type: ignore
 from preface.lib.plot import (
     plot_pca,
     plot_tsne,
@@ -26,7 +25,7 @@ from preface.lib.plot import (
 from preface.lib.functions import preprocess_ratios, ensemble_export
 from preface.lib.xgboost import xgboost_tune, xgboost_fit
 from preface.lib.svm import svm_tune, svm_fit
-from preface.lib.neural import neural_tune, neural_fit
+from preface.lib.neural import neural_tune, neural_fit, NeuralNetwork
 from preface.lib.impute import ImputeOptions, impute_nan
 
 
@@ -227,7 +226,13 @@ def preface_train(
     # Create directory to store split metrics
     os.makedirs(out_dir / "training_splits", exist_ok=True)
     split_metrics = []
-    split_models: list[tuple[object, PCA, keras.Model]] = []
+    split_models: list[
+        tuple[
+            SimpleImputer | KNNImputer | IterativeImputer,
+            PCA,
+            NeuralNetwork | xgb.XGBRegressor | svm.SVC,
+        ]
+    ] = []
 
     # Set up cross-validation
     gss: GroupShuffleSplit = GroupShuffleSplit(
@@ -310,18 +315,9 @@ def preface_train(
             out_dir / "training_splits" / f"split_{split}_regression.png",
         )
 
-        # return metrics
-        metrics: dict = {
-            # split number
-            "split": split,
-            # regression metrics
-            "mae": mean_absolute_error(y_test, predictions),
-            "rmse": root_mean_squared_error(y_test, predictions),
-            "r2": r2_score(y_test, predictions),
-            "intercept": reg_perf["intercept"],
-            "slope": reg_perf["slope"],
-        }
-        split_metrics.append(metrics)
+        # Add split number to metrics
+        reg_perf["split"] = split
+        split_metrics.append(reg_perf)
 
     # Save split metrics to a DataFrame
     split_metrics_df = pd.DataFrame(split_metrics)
