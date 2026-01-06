@@ -42,6 +42,7 @@ pip = ">=25.3,<26"
 ipython = ">=9.9.0,<10"
 jupyterlab = ">=4.5.1,<5"
 jupyter = ">=1.1.1,<2"
+seaborn = ">=0.13.2,<0.14"
 
 [tool.pixi.environments]
 default = ["dev"]
