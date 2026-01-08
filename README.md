@@ -63,68 +63,79 @@ The training pipeline is a robust, multi-step process designed to build a genera
 4.  **Dimensionality Reduction**: For each training split, Principal Component Analysis (PCA) is performed to reduce the high-dimensional genomic data into a smaller, more informative set of features (`--nfeat`).
 5.  **Model Fitting**: A predictive model is trained on the PCA-reduced data. You can choose between three architectures using the `--model` flag: a `neural` network, `xgboost`, or `svm`.
 6.  **Hyperparameter Tuning (Optional)**: If you add the `--tune` flag, PREFACE will first run an optimization process using Optuna to find the best hyperparameters for the chosen model architecture on your specific dataset.
-7.  **Ensemble Creation**: Instead of relying on a single model, PREFACE builds an ensemble from all the models trained during the cross-validation splits. This technique typically results in a more robust and accurate final model. The ensemble, including the complete preprocessing pipeline (imputation and PCA), is saved as a single `PREFACE.onnx` file.
+7.  **FFX Analysis**: If sufficient male samples are available, PREFACE models the relationship between the provided fetal fraction and the mean ratio of chromosome X. This analysis is used to estimate fetal fraction from X-chromosomal patterns (FFX), enabling quality control and potentially identifying sex-chromosomal anomalies.
+8.  **Outlier Detection**: During training, PREFACE identifies samples where the predicted fetal fraction deviates significantly from the provided true value (greater than the Mean Absolute Error + 3 standard deviations). These are flagged as potential outliers in the output statistics.
+9.  **Ensemble Creation**: Instead of relying on a single model, PREFACE builds an ensemble from all the models trained during the cross-validation splits. This technique typically results in a more robust and accurate final model. The ensemble, including the complete preprocessing pipeline (imputation and PCA), is saved as a single `PREFACE.onnx` file.
 
 ### Ensemble Topology
 
 This diagram illustrates the structure of the PREFACE ensemble model, including data processing, cross-validation splits, and model options.
 
 ```mermaid
-graph TD
-    Input[Data Input: Genomic Ratios] --> Preprocess[Preprocess: Exclude Chromosomes]
-    Preprocess --> GlobalSplit{Split Data}
-    
-    subgraph "Cross-Validation Ensemble (n_splits)"
-        direction TB
-        GlobalSplit -->|Split 1| Split1
-        GlobalSplit -->|...| SplitDot[...]
-        GlobalSplit -->|Split n| SplitN
-        
-        subgraph Split1 [Split i Pipeline]
-            direction TB
-            S1_Input[Train/Test Data] --> Impute{Imputation Strategy}
-            
-            Impute -->|Simple| ImpZero[Zero / Constant]
-            Impute -->|Simple| ImpMean[Mean]
-            Impute -->|Simple| ImpMedian[Median]
-            Impute -->|Sklearn| ImpKNN[K-Nearest Neighbors]
-            Impute -->|Experimental| ImpMICE[MICE / Iterative]
-            
-            ImpZero --> PCA[PCA: Dimensionality Reduction]
-            ImpMean --> PCA
-            ImpMedian --> PCA
-            ImpKNN --> PCA
-            ImpMICE --> PCA
-            
-            PCA --> ModelSelect{Model Selection}
-            
-            ModelSelect --> ModNN[Neural Network]
-            ModelSelect --> ModXGB[XGBoost Regressor]
-            ModelSelect --> ModSVM[Support Vector Machine]
-            
-            ModNN --> Output1[Regression Output]
-            ModXGB --> Output1
-            ModSVM --> Output1
-        end
-    end
+---
+config:
+  layout: dagre
+---
+flowchart TB
+ subgraph subGraph1["Cross-Validation Ensemble"]
+    direction TB
+        GlobalSplit{"Split Data"}
+        SplitDot["..."]
+        SplitN["SplitN"]
+  end
+    Input["Data Input: Genomic Ratios"] --> Preprocess["Preprocess: Exclude Chromosomes"]
+    Preprocess --> GlobalSplit
+    GlobalSplit -- "..." --> SplitDot
+    GlobalSplit -- Split n --> SplitN
+    S1_Input["Train/Test Data"] --> Impute{"Imputation Strategy"}
+    Impute -- Simple --> ImpZero["Zero / Constant"] & ImpMean["Mean"] & ImpMedian["Median"]
+    Impute -- Sklearn --> ImpKNN["K-Nearest Neighbors"]
+    ImpZero --> PCA["PCA: Dimensionality Reduction"]
+    ImpMean --> PCA
+    ImpMedian --> PCA
+    ImpKNN --> PCA
+    PCA --> ModelSelect{"Model Selection"}
+    ModelSelect --> ModNN["Neural Network"] & ModXGB["XGBoost Regressor"] & ModSVM["Support Vector Machine"]
+    ModNN --> Output1["Regression Output"]
+    ModXGB --> Output1
+    ModSVM --> Output1
+    SplitDot -- Output --> Aggregator["Aggregator: Mean"]
+    SplitN -- Output --> Aggregator
+    Aggregator --> FinalResult["Final Prediction: Fetal Fraction"]
 
-    Split1 -->|Output| Aggregator[Aggregator: Mean]
-    SplitDot -->|Output| Aggregator
-    SplitN -->|Output| Aggregator
-    
-    Aggregator --> FinalResult[Final Prediction: Fetal Fraction]
-
-    %% Styling
-    classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
-    classDef decision fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
-    classDef model fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
-    classDef output fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
-    
-    class Input,Preprocess,PCA,Aggregator process;
-    class Impute,ModelSelect,GlobalSplit decision;
-    class ImpZero,ImpMean,ImpMedian,ImpKNN,ImpMICE,ModNN,ModXGB,ModSVM model;
-    class FinalResult,Output1 output;
+     GlobalSplit:::decision
+     Input:::process
+     Preprocess:::process
+     Impute:::decision
+     ImpZero:::model
+     ImpMean:::model
+     ImpMedian:::model
+     ImpKNN:::model
+     PCA:::process
+     ModelSelect:::decision
+     ModNN:::model
+     ModXGB:::model
+     ModSVM:::model
+     Output1:::output
+     Aggregator:::process
+     FinalResult:::output
+    classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef decision fill:#fff9c4,stroke:#fbc02d,stroke-width:2px
+    classDef model fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef output fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
 ```
+
+### Output Files
+
+After training, the specified output directory will contain:
+
+-   **`PREFACE.onnx`**: The final trained ensemble model, ready for prediction.
+-   **`training_statistics.txt`**: A summary of model performance (Correlation, MAE, RMSE) and a list of flagged outliers.
+-   **`overall_performance.png`**: A visualization of the model's regression performance on the entire dataset.
+-   **`FFX.png`**: A plot showing the linear regression between Fetal Fraction and Chromosome X ratios (if applicable).
+-   **`cv_splits.png`**: A visual representation of the train/test splits used during cross-validation.
+-   **`training_splits/`**: A subdirectory containing detailed PCA, t-SNE, and regression performance plots for each individual cross-validation split.
+
 
 ### Options
 
