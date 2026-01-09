@@ -2,7 +2,7 @@
 .Rhistory
 .R
 data/
-paper/
+.texpadtmp/
 test_output/
 *.egg-info
 *.onnx

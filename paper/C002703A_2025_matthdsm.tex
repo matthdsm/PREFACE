@@ -1,0 +1,238 @@
+\documentclass[nocrop]{bioinfo}
+\copyrightyear{2026} \pubyear{2026}
+
+\access{Advance Access Publication Date: 06 January 2026}
+\appnotes{Manuscript Category}
+\history{Received January 6, 2026; revised January 6, 2026; accepted January 6, 2026}
+
+
+\let\href\undefined
+\usepackage[hidelinks]{hyperref}
+\usepackage[numbers]{natbib}
+
+\usepackage{graphicx}
+\graphicspath{{./supplementary_data/images/}}
+
+\usepackage{siunitx}
+\usepackage{booktabs}
+
+\begin{document}
+\firstpage{1}
+
+\subtitle{Genetics and Population Analysis}
+
+\title[Enhanced Fetal Fraction Estimation]{Enhanced Fetal Fraction Estimation in Non-Invasive Prenatal Testing via Advanced Imputation and Deep Learning Ensembles}
+\author[Matthias De Smet]{Matthias De Smet\,$^{*\text{\sfb 1,}}$$^{\text{\sfb 2}}$}
+\address{$^{\text{\sf 1}}$Department of Biomolecular Medicine, Ghent University, Belgium \\
+$^{\text{\sf 2}}$Center for Medical Genetics Ghent, Ghent University Hospital, Belgium}
+
+\corresp{$^\ast$To whom correspondence should be addressed.}
+
+\editor{Associate Editor: Prof. Yvan Saeys}
+
+\abstract{\textbf{Motivation:} The clinical reliability of Non-Invasive Prenatal Testing (NIPT) is fundamentally dependent on the accurate estimation of fetal fraction (FF). While shallow whole-genome sequencing (sWGS) is the standard for aneuploidy screening, estimating FF solely from low-pass coverage data remains challenging due to stochastic sparsity and signal noise.\\
+\textbf{Methods:} We evaluated an architectural pipeline incorporating K-Nearest Neighbors (KNN) imputation to address missingness in 100kb genomic coverage bins derived from sWGS. The feature space was processed through Principal Component Analysis (PCA), and we systematically benchmarked an ensemble of homogeneous learners, including Support Vector Machines (SVM), XGBoost, and Neural Networks (NN), optimized via Bayesian search (Optuna). To ensure clinical readiness and interoperability, final ensembles were exported using the Open Neural Network Exchange (ONNX) format.\\
+\textbf{Results:} Systematic benchmarking revealed that coverage-based genomic bins lack sufficient biological signal for robust FF estimation. Principal Component Analysis indicated that the first component captured only 1.4\% of the total variance, reflecting a feature space dominated by stochastic noise. Consequently, while the KNN-imputed Neural Network ensemble achieved a Mean Absolute Error (MAE) of 4.66\%, it yielded a negative coefficient of determination ($R^2=-4.96$). This metric indicates that the model failed to outperform a null baseline and that KNN imputation on high-dimensional raw data did not successfully recover a predictive biological manifold.\\
+\textbf{Conclusion:} Our results demonstrate the limitations of using sWGS read counts as the sole input for fetal fraction regression. We conclude that advanced imputation cannot compensate for the lack of other data modalities, and that future deep learning architectures for NIPT must integrate these to achieve clinical utility.\\
+\textbf{Availability:} The updated PREFACE pipeline and test data are available at \href{https://github.com/matthdsm/PREFACE}{GitHub}.\\
+\textbf{Contact:} \href{mailto:matthias.desmet@ugent.be}{matthias.desmet@ugent.be}.\\
+\textbf{Supplementary information:} Supplementary data are available at request from the author.}
+
+\maketitle
+
+\clearpage
+
+\section{Introduction}
+
+The clinical utility of Non-Invasive Prenatal Testing (NIPT) relies upon the precise quantification of the fetal fraction (FF), defined as the proportion of cell-free DNA (cfDNA) in maternal plasma originating from the placenta. Fetal fractions falling below a 4\% threshold significantly increase the probability of false-negative results \cite{canickImpactMaternalPlasma2013}, often leading to inconclusive clinical findings that necessitate invasive follow-up procedures. Although various computational methods exist for FF estimation \cite{kimKFNIPTKmerFetal2025,mokveldWisecondorFFImprovedFetal2021,dubocNiPTUNEAutomatedPipeline2022,kimDeterminationFetalDNA2015} the PREFACE (PREdict FetAl ComponEnt) \cite{ramanPREFACESilicoPipeline2019} framework established a significant precedent by utilizing shallow whole-genome sequencing (sWGS) and neural networks to predict FF in a gender-independent manner. As NIPT protocols transition toward lower-pass sequencing to increase throughput, the resulting data are increasingly characterized by stochastic sparsity. In typical sWGS (0.1x–1x coverage), genomic bins often exhibit high levels of missingness or extreme noise. Traditional handling methods, such as zero-filling or simple mean imputation, can inadvertently mask the biological variance required for accurate prediction. Principal Component Analysis (PCA)\cite{pearsonLIIILinesPlanes1901} is particularly sensitive to these shifts. If the underlying variance is flattened by simplistic imputation, the resulting principal components lose the subtle signals associated with cfDNA fragmentation patterns. This necessitates the adoption of advanced imputation strategies, such as K-Nearest Neighbors (KNN)\cite{troyanskayaMissingValueEstimation2001}, to preserve the manifold structure of the data prior to dimensionality reduction. In this context, the manifold refers to the assumption that high-dimensional genomic coverage data actually lies on a lower-dimensional subspace defined by biological constraints, such as nucleosome positioning and fragmentation signatures. By using KNN, we ensure that missing data points are estimated based on their proximity to other samples within this biological subspace, rather than being pulled toward a non-biological global average. Furthermore, the transition from single-model architectures to homogeneous ensemble learning represents a shift toward higher model reliability. Single neural networks are prone to overfitting in high-dimensional, low sample size (HDLSS) contexts, where they may memorize batch-specific artifacts. By employing a GroupShuffleSplit cross-validation framework\cite{pedregosaScikitlearnMachineLearning2018}, an ensemble of networks can be trained on disparate data folds defined by clinical groups, such as sequencing runs. This strategy leverages the Diversity Prediction Theorem \cite{kroghNeuralNetworkEnsembles1994,pageDifferenceHowPower2025}, ensuring that the final prediction generalizes across between-laboratory biases and provides a stable estimator for diverse clinical populations. Finally, shifting to a Python-based ecosystem facilitates the use of production-grade frameworks like PyTorch\cite{paszkePyTorchImperativeStyle2019} and the ONNX\cite{onnxruntime} format. This ensures the updated PREFACE framework is not only more accurate but also fully interoperable with cloud-native clinical pipelines. In this study, we systematically benchmark 12 combinations of advanced imputers and regression learners to demonstrate the precision of KNN-imputed deep-learning ensembles in high-throughput prenatal diagnostics.
+
+\section{Methods}
+\subsection{Data preprocessing}
+The primary input data consisted of a sample registry containing metadata and corresponding genomic coverage files. Genomic coverage was derived from sWGS data processed via WisecondorX\cite{ramanWisecondorXImprovedCopy2019}, which segments the genome into 100kb fixed-width bins. For each bin, a $\log_2$-transformed copy number ratio was calculated relative to a reference panel.
+\begin{equation}
+\text{Ratio}_{bin} = \log_2 \left( \frac{\text{Observed Reads}}{\text{Expected Reads}} \right)
+\end{equation}
+A ratio of 0 indicates a normal diploid state, positive values indicate duplications, and negative values indicate deletions. For the purpose of FF estimation, the model uses these profile-corrected ratios as the raw features. Data integration was performed by constructing a feature matrix $X \in \mathbb{R}^{N \times M}$, where $N=186$ represents the euploid samples (89 male, 97 female) and $M$ represents the genomic bins ($M=3\times10^4$). To ensure the model learned features associated with constitutional fetal fraction rather than large-scale numerical abnormalities, bins residing on chromosomes 13 (Down syndrome), 18 (Edwards syndrome), 21 (Patau syndrome), X, and Y (Sex chromosomal aneuploidies (SCAs)) were excluded. This prevents confounding by common autosomal trisomies. Furthermore, genomic bins with a missingness rate exceeding 1\% were removed to eliminate regions affected by systematic sequencing artefacts, ensuring the remaining feature set was suitable for downstream imputation.
+
+\subsection{Cross validation}
+To assess model generalizability and mitigate overfitting risks in a high-dimensional feature space, we employed a GroupShuffleSplit cross-validation strategy. Within this framework, groups were defined by percentile ranges of the FF target. This stratified shuffling approach was specifically designed to ensure robust model evaluation despite the constraints of a limited sample size ($N=186$). By partitioning the data based on FF percentiles, we ensured that each test set remained a statistically representative subset of the original population's phenotypic distribution. This methodology prevents systemic bias inherent in random splits, where an accidental over-concentration of median cases in the test set can lead to artificial fluctuations in performance metrics. Furthermore, this approach addresses the instability often associated with standard $K$-fold partitions in small genomic cohorts. By utilizing GroupShuffleSplit to perform Monte Carlo resampling across multiple iterations, the architecture was subjected to a rigorous assessment across the entire spectrum of patient profiles. The resulting MAE and $R^2$ values provide stable, highly reproducible metrics of clinical utility.
+\begin{figure}[h]
+\includegraphics[width=\linewidth]{cv_splits}
+\caption{Example of dataset splits by GroupShuffleSplit}
+\centering
+\end{figure}
+
+\subsection{Dimensionality reduction}
+The imputed feature matrix contains approximately $3\times10^4$ genomic bins ($M$) for 186 samples ($N$). Direct application of machine learning algorithms on this $M \gg N$ dataset introduces statistical challenges inherent to high-dimensional data, potentially leading to severe overfitting. To compress the feature space while retaining biological signal, we employed PCA. While non-linear manifold learning techniques such as t-SNE or UMAP are powerful for visualization, they often distort global distance metrics and feature linearity. This makes them less suitable for regression tasks where preserving the continuous, additive magnitude of the signal is crucial. PCA linearly transforms the correlated genomic bin counts into a set of orthogonal principal components. The top components typically capture systematic biological variation correlating with the fetal fraction, while lower-order components represent stochastic sequencing noise. We selected the top $k$ components that explained 95\% of the total variance.
+
+\subsection{Missing Data and Imputation}
+In high-dimensional genomic datasets, missing values often arise from technical filtering or stochastic dropout. Understanding the mechanism of this missingness is prerequisite to selecting an appropriate imputation strategy. The statistical literature typically classifies missingness into three categories\cite{rubinInferenceMissingData1976}:
+\begin{itemize}
+    \item Missing Completely at Random (MCAR): The probability of a data point being missing is unrelated to any values in the dataset. In sequencing, this might correspond to a random bubble in a flow cell or a transient optical error.
+\item Missing at Random (MAR): The missingness is related to observed variables. For instance, if sequencing depth (an observed variable) is low, missingness in certain bins increases.
+\item Missing Not at Random (MNAR): The missingness is related to the unobserved value itself. In genomics, this is common. Hard-to-sequence regions (e.g., high GC content) are more likely to be missing because of their sequence composition.
+\end{itemize}
+
+We evaluate imputation strategies under the assumption that sWGS missingness is a hybrid of MAR and MNAR. The stochastic nature of low-pass sequencing introduces random dropout (MAR), while sequence-specific biases introduce systematic dropout (MNAR). We tested several imputations strategies:
+\begin{itemize}
+    \item Constant Imputation (Zero-filling): This method replaces missing values with 0.0. In the context of $\log_2$ copy number ratios, a value of 0.0 represents a balanced diploid state ($\log_2(\text{Obs}/\text{Exp}) = 0$). Consequently, this imputation strategy erroneously conflates missing data (absence of signal) with normal biological state (expected signal). By replacing missing bins with 0.0, the model effectively treats technical dropout as biological normality, artificially suppressing the variance required for anomaly detection.
+    \item Global Mean/Median Imputation: This method replaces a missing value in bin $j$ with the mean or median of bin $j$ across all $N$ samples. While this preserves the first moment (mean) of the distribution, it severely distorts the second moment (variance) and the covariance structure. It essentially pulls the data towards the centroid of the population, reducing the spread of the data and making samples look more similar than they actually are. In the context of PCA, this variance deflation is particularly damaging because PCA seeks to maximise variance. Features with artificially reduced variance contribute less to the principal components.
+    \item K-Nearest Neighbours (KNN) Imputation estimates missing values by averaging the values of the $k$-nearest samples in the feature space using Euclidean distance. For a given sample $x_i$ with a missing value in bin $j$, the algorithm identifies the $k$ most similar samples (neighbours) in the dataset based on Euclidean distance calculated using the observed features. The missing value is then imputed as a weighted average of the values in bin $j$ from these neighbours. \begin{equation}
+        \hat{x}_{ij} = \frac{\sum_{n \in \mathcal{N}_k(x_i)} w_n x_{nj}}{\sum_{n \in \mathcal{N}_k(x_i)} w_n}
+        \end{equation}
+        where $\mathcal{N}_k(x_i)$ is the set of nearest neighbors and $w_n$ is a weight (often $1/d$ where $d$ is distance).
+\end{itemize}
+Although it incurs a computational penalty during inference, KNN Imputation was selected as the default strategy due to its ability to preserve local data structure and provide greater stability in high-dimensional spaces.
+
+\subsection{Model selection}
+We benchmarked three distinct algorithms for the regression task.
+\begin{itemize}
+\item Support Vector Machines (SVM)\cite{cortesSupportvectorNetworks1995} with Linear Kernels were used as a baseline. They are considered effective in high-dimensional spaces but may miss complex interactions between genomic regions.
+\item XGBoost (Extreme Gradient Boosting)\cite{chenXGBoostScalableTree2016} is an ensemble tree-based method, where it builds decision builds sequentially, with each new tree correcting the errors of the previous ones. It handles non-linearities well but requires intensive tuning to prevent overfitting on small datasets.
+\item Neural Networks \cite{haykinNeuralNetworksComprehensive1999} were utilized for their capacity to model highly complex, non-linear relationships.
+\end{itemize}
+When dealing with small sample sizes ($N=186$), single neural networks are prone to high variance\cite{gemanNeuralNetworksBias1992}. Their weights can vary wildly based on the specific composition of the training batch, leading to overfitting. To counteract this, we utilised an ensemble of homogeneous learners, multiple instances of the same network architecture trained on different subsets of the data. This approach exploits the Diversity Prediction Theorem which states: $$\text{Collective Error} = \text{Average Individual Error} - \text{Prediction Diversity}$$
+This theorem mathematically guarantees that if the individual models in an ensemble make diverse errors (i.e., their errors are uncorrelated), the error of the ensemble average will be lower than the average error of the individual models. By training on different folds of the data (generated via GroupShuffleSplit), we ensure that the individual networks view the problem from slightly different angles, thereby maximising prediction diversity and stabilising the final output.
+
+\subsection{Hyperparameter Tuning}
+Hyperparameter optimization was conducted to identify configurations that minimized validation error. Grid search, the traditional method for hyperparameter tuning, performs an exhaustive search over a manually specified subset of the hyperparameter space. This is computationally inefficient and often misses optimal configurations located between grid points. We utilized Optuna\cite{akibaOptunaNextgenerationHyperparameter2019}, a define-by-run hyperparameter optimization framework, rather than standard GridSearchCV. Optuna employs a Tree-structured Parzen Estimator (TPE)\cite{watanabeTreeStructuredParzenEstimator2023}.
+\begin{equation}
+EI(x) = \frac{l(x)}{g(x)}
+\end{equation}
+where $l(x)$ and $g(x)$ represent the probability density functions of the hyperparameters given that the objective function value is lower than (good) or higher than (bad) a threshold $y^*$, respectively. This Bayesian optimization algorithm models the probability of hyperparameters yielding lower validation errors, allowing the search to intelligently prune unpromising areas and converge on optimal settings more efficiently. We constructed a comprehensive grid of parameters for each model type to be evaluated as shown in tables \ref{table:Hyperparameter search space for Neural Network models}, \ref{table:Hyperparameter search space for Support Vector Machine models.}, and \ref{table:Hyperparameter search space for XGBoost models.}.
+
+\begin{table}[htbp]
+\label{table:Hyperparameter search space for Neural Network models}
+\centering
+\caption{Hyperparameter search space for Neural Network models.}
+\begin{tabular}{lll}
+\toprule
+\textbf{Parameter} & \textbf{Range} & \textbf{Step Size / Scaling} \\
+\midrule
+Number of layers & $1 - 3$ & 1 \\
+Learning rate & $10^{-4} - 10^{-2}$ & Log-scaled \\
+Hidden size & $16 - 128$ & 16 \\
+Dropout rate & $0.1 - 0.5$ & 0.1 \\
+Batch size & $8 - 64$ & 8 \\
+\botrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\label{table:Hyperparameter search space for Support Vector Machine models.}
+\centering
+\caption{Hyperparameter search space for Support Vector Machine models.}
+\begin{tabular}{lll}
+\toprule
+\textbf{Parameter} & \textbf{Range} & \textbf{Step Size / Scaling} \\
+\midrule
+C & $10^-3 - 10^2$ & Log-scaled \\
+\botrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\label{table:Hyperparameter search space for XGBoost models.}
+\centering
+\caption{Hyperparameter search space for XGBoost models.}
+\begin{tabular}{lll}
+\toprule
+\textbf{Parameter} & \textbf{Range} & \textbf{Step Size / Scaling} \\
+\midrule
+Number of Estimators & $100 - 800$ & 10 \\
+Max Depth & $1 - 10$ & 1 \\
+Learning rate & $10^{-4} - 10^{-2}$ & Log-scaled \\
+Subsample Ratio & $0.5 - 1$ & 0.1 \\
+Subsample Ratio & $0.5 - 1$ & 0.1 \\
+Colsample By Tree & $0.5 - 1$ & 0.1 \\
+\botrule
+\end{tabular}
+\end{table}
+
+\subsection{Model Evaluation}
+Model performance was evaluated using standard regression metrics \cite{montgomeryIntroductionLinearRegression2021}, including R-squared ($R^2$), Mean Absolute Error (MAE), and Root Mean Squared Error (RMSE). $R^2$ represents the proportion of variance explained by the model, while MAE provides a direct interpretation of the expected error in fetal fraction percentage points. RMSE penalizes large errors more heavily, making it critical for detecting outliers. High performance is characterized by an $R^2 > 0.90$ and low RMSE/MAE. A significant divergence between RMSE and MAE indicates the presence of large outlier errors, suggesting a failure to generalize to specific "hard" samples.
+
+\subsection{Model Distribution and Deployment}
+To facilitate seamless integration into clinical bioinformatics pipelines, the final trained models were exported using the ONNX format. While native Python serialization formats like \texttt{pickle} are frequently used, they present significant barriers to clinical deployment due to security vulnerabilities and strict dependencies on specific library versions. Such files are often tightly coupled to their creation environment, leading to environment-specific reproduction failures. In contrast, ONNX defines a framework-agnostic computation graph that decouples the model architecture from the training environment. This adoption provides critical benefits, including interoperability with existing clinical reporting tools, hardware acceleration to minimize inference latency, and rigorous reproducibility through "frozen" binary models.
+\begin{figure*}[b]
+\centering
+\includegraphics[width=\textwidth]{PREFACE_diagram_wide}
+\caption{Diagram of the PREFACE workflow}
+\end{figure*}
+
+\section{Results}
+\subsection{Dimensionality Reduction and Variance Analysis}
+To evaluate the underlying structure of the feature space, a Principal Component Analysis (PCA) was performed on the entire dataset. Analysis of the resulting scree plot reveals that the first principal component (PC1) accounts for approximately $1.4\%$ of the total variance. This suggests a high-dimensional feature space where information is broadly distributed rather than concentrated. The variance profile is characterized by an extremely shallow curve that plateaus rapidly after the first few components. This profile indicates that the dataset lacks a dominant signal, pointing toward high feature independence or a significant signal-to-noise ratio. Notably, this lack of dimensionality was found to be similar across all four imputation strategies. The relationship between the extracted features and the predicted fetal fraction ($FF$) was visualized by projecting the samples onto the first two principal axes ($PC1$ vs. $PC2$), with a color gradient representing $FF$ levels. The resulting plots show a complete absence of spatial clustering or gradient formation. High $FF$ (red) and low $FF$ (blue) samples are stochastically intermingled across the coordinate space, confirming that the primary axes of variation do not align with $FF$ fluctuations. Consistent with the scree analysis, the distribution of $FF$ values remained invariant across all imputation techniques. These findings suggest that the natural variation within the feature set is significantly more pronounced than any biological signal associated with $FF$ and indicate that no single bin or bins have a large influence on the predicted $FF$.
+\begin{figure}
+\includegraphics[width=\linewidth]{PCA_global}
+\caption{PCA Projection by Predicted Fetal Fraction}
+\centering
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{scree_global}
+\caption{Explained Variance Ratio per Principal Component}
+\centering
+\end{figure}
+
+\subsection{Model Performance and Predictive Stability}
+The predictive performance of the machine learning models was evaluated using Mean Absolute Error (MAE), Root Mean Square Error (RMSE), and the coefficient of determination ($R^2$). As summarized in Table \ref{table:Summary performance metrics for all 12 tested imputation-model permutations.}, the XGBoost (Mean) permutation achieved the lowest overall error ($\text{MAE} = 4.61 \pm 4.11\%$). However, the Neural (KNN) model demonstrated superior stability, yielding a nearly identical mean error ($\text{MAE} = 4.66\%$) with a significantly lower standard deviation ($\text{SD} = 2.88$). A critical observation was the failure of neural architectures to converge when utilizing naive imputation strategies. While KNN-based imputation preserved model stability, the introduction of zero-filling (Neural Zero) resulted in a performance collapse, with the $R^2$ mean falling to $-18.77 \pm 16.69$. This catastrophic metric indicates that the model predictions were uncalibrated and uncorrelated with the target variable. An $R^2$ of this magnitude signifies that the optimization process failed to find a valid solution in the feature space, performing significantly worse than a null regressor that simply predicts the mean. Conversely, the SVM models exhibited complete invariance to the choice of imputation, maintaining a consistent but high error rate ($\text{MAE} = 8.39 \pm 2.73\%$), which suggests that the support vectors were unable to capture a meaningful signal within the high-dimensional noise.
+
+% Configure siunitx for mean +/- sd alignment
+\sisetup{
+  separate-uncertainty = true,
+  table-format = 2.2(2),
+  tight-spacing = true
+}
+
+\begin{table}[ht]
+\centering
+\caption{Predictive Performance Metrics with Variability.
+Results are reported as Mean $\pm$ Standard Deviation (SD) across permutations.}
+\label{table:Summary performance metrics for all 12 tested imputation-model permutations.}
+\small
+\begin{tabular}{l l l l}
+\toprule
+\textbf{Permutation} & \textbf{MAE (\%)} & \textbf{RMSE (\%)} & \textbf{$R^2$} \\ 
+\midrule
+\textit{Neural Network} & & & \\
+\quad KNN & $4.66 \pm 2.88$ & $5.73 \pm 3.12$ & $-4.96 \pm 7.35$ \\
+\quad Mean & $6.58 \pm 3.00$ & $7.41 \pm 2.69$ & $-7.83 \pm 5.56$ \\
+\quad Median & $6.20 \pm 2.56$ & $7.33 \pm 2.42$ & $-7.48 \pm 4.96$ \\
+\quad Zero & $10.26 \pm 5.04$ & $10.79 \pm 4.82$ & $-18.77 \pm 16.69$ \\ 
+\addlinespace
+\textit{SVM} & & & \\
+\quad All Methods* 
+& $8.39 \pm 2.73$ & $8.82 \pm 2.61$ & $-11.62 \pm 8.50$ \\ 
+\addlinespace
+\textit{XGBoost} & & & \\
+\quad Mean & $4.61 \pm 4.11$ & $5.12 \pm 3.96$ & $-5.26 \pm 8.48$ \\
+\quad Median & $5.12 \pm 4.89$ & $5.60 \pm 4.74$ & $-7.02 \pm 11.31$ \\
+\quad Zero & $4.77 \pm 4.32$ & $5.25 \pm 4.18$ & $-5.73 \pm 9.23$ \\ 
+\bottomrule
+\multicolumn{4}{l}{\small *SVM results were identical across all imputation strategies.}
+\end{tabular}
+\end{table}
+
+
+\begin{figure}[h]
+\includegraphics[width=\linewidth]{summary_boxplot_r2}
+\caption{Boxplot of $R^2$ variability across permutations}
+\centering
+\end{figure}
+
+\section{Discussion}
+The primary finding of this study is that count-based genomic features derived from sWGS, when binned at 100kb resolution, lack sufficient biological signal to drive robust fetal fraction ($FF$) estimation. In the $PC1$ vs. $PC2$ coordinate space, samples with high and low $FF$ levels were stochastically intermingled, with no visible clustering or gradient formation. This observation, coupled with the flat profile observed in the scree analysis, indicates that the variance in the dataset is dominated by stochastic noise rather than the biological signal of fetal aneuploidy or fraction. Consequently, the negative $R^2$ values observed across all regression permutations should be interpreted as a failure of the feature engineering limits rather than a model convergence failure. The models effectively performed worse than a null regressor because they attempted to fit patterns in what was essentially stochastic noise. A significant methodological limitation identified in this workflow is the application of K-Nearest Neighbors (KNN) imputation directly on the high-dimensional feature space ($M \gg N$). In such high-dimensional settings, Euclidean distance metrics converge, rendering the identification of nearest neighbors biologically meaningless due to the curse of dimensionality. This likely introduced noise amplification during the imputation step, corrupting the covariance structure necessary for PCA. To address this, future work must evaluate multivariate iterative imputation strategies, such as Multiple Imputation by Chained Equations (MICE)\cite{whiteMultipleImputationUsing2011} or Random Forest-based imputation (MissForest\cite{stekhovenMissForestnonparametricMissingValue2012}). Unlike simple distance-based metrics, these iterative imputers model the conditional distribution of missing variables based on the observed data structure. Implementing regularized versions of MICE capable of handling high-dimensional input pre-PCA could potentially recover the latent biological manifold that was lost in the current KNN-based approach.
+
+\section{Conclusion}
+This study underscores the fundamental limits of using shallow whole-genome sequencing (sWGS) coverage bins as the sole predictor for fetal fraction estimation. Contrary to our initial hypothesis, our benchmarking reveals that advanced imputation strategies, such as K-Nearest Neighbors (KNN), cannot recover a predictive manifold from high-dimensional count data when the underlying biological signal is obscured by stochastic sequencing noise. The persistent negative $R^2$ values across all ensemble architectures demonstrate that 100kb coverage bins lack the necessary information density for robust regression in this context. We conclude that future improvements in NIPT bioinformatics cannot rely on increasingly complex ensemble models applied to sparse coverage data. Instead, the focus must shift to feature engineering that captures multi-modal biological signals. Specifically, future workflows should integrate fragment size distributions (fragmentomics) and methylation signatures, which have been shown to correlate more strongly with fetal DNA fraction than read counts alone. Additionally, we recommend replacing distance-based imputation with multivariate iterative strategies, such as Multiple Imputation by Chained Equations (MICE), to better handle the sparsity inherent in low-pass sequencing. Finally, reliance on high-depth chromosome Y counting in male fetuses remains the gold standard for ground-truth generation, and expanding these reference cohorts is essential for reducing label noise in training datasets.
+
+\section*{Acknowledgments}
+Google Gemini Pro 3.0 was used to assist in the drafting and editing of this manuscript to improve readability and structural coherence. All scientific content and conclusions were verified by the author.
+
+\section*{Funding}
+This work has been supported by Center for Medical Genetics Ghent, Ghent University hospital.
+
+\bibliographystyle{plainnat_limited}
+\bibliography{PREFACE}
+\end{document}
